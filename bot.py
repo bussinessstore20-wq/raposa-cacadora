@@ -1047,28 +1047,41 @@ async def enviar_notificacao_admin(
 # PROCESSAR PRODUTO
 # ============================================================
 
+from mercadolivre import buscar_produto_por_link as buscar_produto_ml
+# certifique-se de importar a sua função da Shopee existente no seu projeto
+# ex: from shopee import buscar_produto_por_link as buscar_produto_shopee
+
 async def processar_produto(
     bot: Bot,
     produto_fila: dict[str, Any],
 ):
 
     produto_id = produto_fila["id"]
-
     link = produto_fila["link"]
 
-    logger.info(
-        "=========================================="
-    )
+    logger.info("==========================================")
+    logger.info("Processando produto ID %s", produto_id)
+    logger.info("Link: %s", link)
 
-    logger.info(
-        "Processando produto ID %s",
-        produto_id,
-    )
+    # 1. IDENTIFICAR A PLATAFORMA PELO LINK
+    link_lower = link.lower().strip()
 
-    logger.info(
-        "Link: %s",
-        link,
-    )
+    if any(dominio in link_lower for dominio in ["meli.la", "mercadolivre.com", "mercadolibre.com"]):
+        logger.info("Plataforma identificada: Mercado Livre")
+        dados_produto = await asyncio.to_thread(
+            buscar_produto_ml,
+            link
+        )
+
+    elif "shopee" in link_lower:
+        logger.info("Plataforma identificada: Shopee")
+        dados_produto = await asyncio.to_thread(
+            buscar_produto_shopee, # <--- nome da sua função original da Shopee
+            link
+        )
+
+    else:
+        raise ValueError(f"Link de plataforma não suportada: {link}")
 
     # ========================================================
     # RESERVAR PRODUTO
