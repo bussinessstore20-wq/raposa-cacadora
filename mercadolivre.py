@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 import requests
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ MERCADOLIVRE_API_URL = os.getenv(
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/130.0.0.0 Safari/537.36"
+    "Chrome/128.0.0.0 Safari/537.36"
 )
 
 
@@ -33,25 +34,24 @@ class MercadoLivreAPIError(Exception):
 
 
 # ============================================================
-# SESSÃO E REQUISIÇÕES
+# SESSÃO E REQUISIÇÕES HTTP
 # ============================================================
 
 def _obter_sessao() -> requests.Session:
     """
-    Cria uma sessão HTTP para requisições na API pública.
-    Caso exista um token de acesso configurado, ele será utilizado,
-    mas a chamada funcionará normalmente sem ele.
+    Cria uma sessão HTTP para requisições na API pública do Mercado Livre.
+    Se um token estiver configurado via variável de ambiente, ele será enviado.
+    Caso contrário, fará as requisições públicas sem falhar.
     """
     session = requests.Session()
     access_token = os.getenv("MERCADOLIVRE_ACCESS_TOKEN", "").strip()
 
     headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
         "User-Agent": DEFAULT_USER_AGENT,
+        "Accept": "application/json, text/html, */*",
+        "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
     }
 
-    # Adiciona o Authorization apenas se o token for fornecido
     if access_token:
         headers["Authorization"] = f"Bearer {access_token}"
 
@@ -60,16 +60,19 @@ def _obter_sessao() -> requests.Session:
 
 
 # ============================================================
-# RESOLVER LINK E EXTRAIR ITEM ID
+# EXTRAÇÃO DE ITEM ID (MLB)
 # ============================================================
 
 def extrair_item_id_da_string(conteudo: str) -> Optional[str]:
-    """Auxiliar para extrair o formato MLB12345678 de qualquer texto/URL."""
+    """
+    Extrai um Item ID válido do Mercado Livre (formato MLB + 8 a 10 dígitos).
+    Evita capturar hashes ou IDs internos inválidos.
+    """
     if not conteudo:
         return None
 
-    # Procura por MLB1234567890 ou MLB-1234567890
-    match = re.search(r"MLB[-_]?(\d{6,})", conteudo, re.IGNORECASE)
+    # Procura estritamente por MLB seguido de 8 a 10 dígitos
+    match = re.search(r"MLB[-_]?(\d{8,10})", conteudo, re.IGNORECASE)
     if match:
         return f"MLB{match.group(1)}".upper()
 
@@ -81,7 +84,7 @@ def extrair_item_id_da_string(conteudo: str) -> Optional[str]:
             for key in ("item_id", "itemId", "itemid"):
                 if key in params:
                     val = params[key][0]
-                    m = re.search(r"MLB[-_]?(\d{6,})", val, re.IGNORECASE)
+                    m = re.search(r"MLB[-_]?(\d{8,10})", val, re.IGNORECASE)
                     if m:
                         return f"MLB{m.group(1)}".upper()
     except Exception:
@@ -91,21 +94,26 @@ def extrair_item_id_da_string(conteudo: str) -> Optional[str]:
 
 
 def extrair_item_id(valor: str) -> str:
-    """Extrai Item ID diretamente do valor fornecido."""
+    """Valida e extrai o Item ID de uma string fornecida."""
     if not valor:
         raise MercadoLivreAPIError("Valor vazio para extração do Item ID.")
 
     item_id = extrair_item_id_da_string(str(valor).strip())
     if not item_id:
-        raise MercadoLivreAPIError(f"Item ID inválido: {valor}")
+        raise MercadoLivreAPIError(f"Item ID inválido ou não encontrado: {valor}")
 
     return item_id
 
 
+# ============================================================
+# RESOLVER LINK E ACESSAR VITRINE
+# ============================================================
+
 def resolver_link_e_extrair_id(link: str) -> Tuple[str, str]:
     """
-    Resolve o link redirecionado e tenta extrair o Item ID (MLB)
-    seja pela URL final ou inspecionando o corpo do HTML.
+    Resolve o link de redirecionamento.
+    Caso o link caia em uma vitrine/perfil social (/social/), o script varre o HTML
+    para encontrar o produto de destino dentro da vitrine.
     """
     link = link.strip()
     if not link:
@@ -113,21 +121,13 @@ def resolver_link_e_extrair_id(link: str) -> Tuple[str, str]:
 
     logger.info("Resolvendo link do Mercado Livre: %s", link)
 
-    headers = {
-        "User-Agent": DEFAULT_USER_AGENT,
-        "Accept": (
-            "text/html,application/xhtml+xml,application/xml;q=0.9,"
-            "image/avif,image/webp,*/*;q=0.8"
-        ),
-        "Accept-Language": "pt-BR,pt;q=0.9",
-    }
+    session = _obter_sessao()
 
     try:
-        response = requests.get(
+        response = session.get(
             link,
             allow_redirects=True,
             timeout=30,
-            headers=headers,
         )
         logger.info("HTTP ao resolver link: %d", response.status_code)
 
@@ -147,37 +147,48 @@ def resolver_link_e_extrair_id(link: str) -> Tuple[str, str]:
     if not url_final:
         raise MercadoLivreAPIError("O Mercado Livre não retornou uma URL final.")
 
-    # 1. Tenta extrair pela URL final
+    # 1. Tenta extrair um MLB legítimo direto da URL final
     item_id = extrair_item_id_da_string(url_final)
+    if item_id:
+        logger.info("Item ID extraído diretamente da URL final: %s", item_id)
+        return url_final, item_id
 
-    # 2. Fallback: Se não encontrou na URL, busca no corpo HTML da página
-    if not item_id and response.text:
-        logger.info("Tentando extrair Item ID do corpo HTML da página...")
-        item_id = extrair_item_id_da_string(response.text)
+    # 2. Se a URL for de uma vitrine (/social/), varre o HTML da vitrine buscando produtos
+    if "/social/" in url_final and response.text:
+        logger.info("Página de vitrine detectada (/social/). Procurando produtos na vitrine...")
 
-    if not item_id:
-        if "/social/" in url_final:
-            raise MercadoLivreAPIError(
-                "O link enviado pertence a uma página/perfil social de afiliado e não contém um produto identificável."
-            )
-        raise MercadoLivreAPIError(
-            "Não foi possível encontrar o Item ID (MLB) do Mercado Livre na URL ou no HTML."
-        )
+        soup = BeautifulSoup(response.text, "html.parser")
 
-    logger.info("Item ID encontrado com sucesso: %s", item_id)
-    return url_final, item_id
+        # Busca 1: Varre todas as tags de link <a> na vitrine
+        for tag_a in soup.find_all("a", href=True):
+            href = tag_a["href"]
+            id_encontrado = extrair_item_id_da_string(href)
+            if id_encontrado:
+                logger.info("Produto encontrado nos links da vitrine: %s", id_encontrado)
+                return url_final, id_encontrado
+
+        # Busca 2: Regex no HTML completo (para scripts, JSON-LD ou dados renderizados)
+        matches = re.findall(r"MLB[-_]?(\d{8,10})", response.text, re.IGNORECASE)
+        if matches:
+            id_encontrado = f"MLB{matches[0]}".upper()
+            logger.info("Produto encontrado via Regex no corpo da vitrine: %s", id_encontrado)
+            return url_final, id_encontrado
+
+    raise MercadoLivreAPIError(
+        "Não foi possível extrair nenhum produto válido do link ou da vitrine informada."
+    )
 
 
 # ============================================================
-# CONSULTAS À API PÚBLICA
+# CONSULTA DE PRODUTOS VIA API PÚBLICA
 # ============================================================
 
 def _api_get(endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Executa uma requisição GET na API do Mercado Livre."""
+    """Executa uma chamada GET na API do Mercado Livre."""
     url = f"{MERCADOLIVRE_API_URL.rstrip('/')}/{endpoint.lstrip('/')}"
     session = _obter_sessao()
 
-    logger.info("Consultando Mercado Livre (Público): %s", url)
+    logger.info("Consultando API do Mercado Livre: %s", url)
 
     try:
         response = session.get(url, params=params, timeout=30)
@@ -189,42 +200,42 @@ def _api_get(endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str
     logger.info("Mercado Livre HTTP %d", response.status_code)
 
     if response.status_code != 200:
-        logger.error("Resposta do Mercado Livre: %s", response.text[:2000])
+        logger.error("Resposta do Mercado Livre: %s", response.text[:1000])
         raise MercadoLivreAPIError(
-            f"Mercado Livre respondeu HTTP {response.status_code}: {response.text[:500]}"
+            f"Mercado Livre respondeu HTTP {response.status_code}: {response.text[:300]}"
         )
 
     try:
         return response.json()
     except ValueError as erro:
         raise MercadoLivreAPIError(
-            "O Mercado Livre retornou uma resposta inválida (não JSON)."
+            "A API do Mercado Livre retornou uma resposta em formato inválido (não JSON)."
         ) from erro
 
 
 def _consultar_item(item_id: str) -> Dict[str, Any]:
-    """Busca os detalhes públicos de um anúncio."""
+    """Consulta as informações públicas de um anúncio através do seu MLB."""
     item_id = str(item_id).strip().upper()
 
-    if not re.fullmatch(r"MLB\d{6,}", item_id):
-        raise MercadoLivreAPIError(f"Item ID inválido: {item_id}")
+    if not re.fullmatch(r"MLB\d{8,10}", item_id):
+        raise MercadoLivreAPIError(f"Formato de Item ID inválido para API: {item_id}")
 
     return _api_get(f"/items/{item_id}")
 
 
 # ============================================================
-# BUSCAR PRODUTO
+# BUSCAR E FORMATAR DADOS DO PRODUTO
 # ============================================================
 
 def buscar_produto_por_ids(item_id: Any, shop_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Consulta dados do produto via API pública e formata a resposta."""
+    """Consulta os detalhes do produto e formata a resposta para o sistema."""
     logger.info("Consultando produto: itemId=%s", item_id)
 
     item_id_normalizado = extrair_item_id(str(item_id))
     produto_api = _consultar_item(item_id_normalizado)
 
     if not produto_api:
-        logger.warning("Nenhum produto retornado para %s", item_id_normalizado)
+        logger.warning("Nenhum dado retornado para %s", item_id_normalizado)
         return None
 
     item_id_retorno = produto_api.get("id") or item_id_normalizado
@@ -236,7 +247,7 @@ def buscar_produto_por_ids(item_id: Any, shop_id: Optional[str] = None) -> Optio
     if pictures and isinstance(pictures[0], dict):
         image_url = pictures[0].get("secure_url") or pictures[0].get("url")
 
-    # Cálculo de preços e descontos
+    # Preços e descontos
     price = produto_api.get("price")
     original_price = produto_api.get("original_price")
     price_discount_rate = None
@@ -280,21 +291,24 @@ def buscar_produto_por_ids(item_id: Any, shop_id: Optional[str] = None) -> Optio
         "mercadolivreData": produto_api,
     }
 
-    logger.info("Produto encontrado com sucesso: %s", produto.get("productName"))
+    logger.info("Produto processado com sucesso: %s", produto.get("productName"))
     return produto
 
 
 def buscar_produto_por_link(link: str) -> Dict[str, Any]:
-    """Resolve o link de afiliado, identifica o MLB e busca as informações do produto."""
+    """
+    Função principal: Resolve o link encurtado/vitrine, extrai o produto real
+    e retorna as informações com o seu link de afiliado original associado.
+    """
     if not link:
-        raise MercadoLivreAPIError("Link está vazio.")
+        raise MercadoLivreAPIError("Link de entrada está vazio.")
 
     link = link.strip()
 
-    # 1. Resolve redirecionamentos e captura o ID do produto
+    # 1. Resolve o link e localiza o MLB do produto
     url_final, item_id = resolver_link_e_extrair_id(link)
 
-    # 2. Busca dados via API pública
+    # 2. Busca dados públicos do produto na API do Mercado Livre
     produto = buscar_produto_por_ids(item_id=item_id)
 
     if not produto:
@@ -302,7 +316,7 @@ def buscar_produto_por_link(link: str) -> Dict[str, Any]:
             "O produto não foi encontrado na API do Mercado Livre."
         )
 
-    # Preserva metadados e o link de afiliado original
+    # 3. Mantém o link de afiliado original para garantir as suas comissões
     produto.update({
         "manualAffiliateLink": link,
         "affiliateLink": link,
@@ -315,7 +329,7 @@ def buscar_produto_por_link(link: str) -> Dict[str, Any]:
 
 
 # ============================================================
-# EXECUÇÃO DE TESTE LOCAL
+# TESTE LOCAL
 # ============================================================
 
 if __name__ == "__main__":
@@ -324,15 +338,16 @@ if __name__ == "__main__":
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
 
+    # Teste com a URL encurtada de vitrine
     link_teste = os.getenv("MERCADOLIVRE_LINK_TESTE", "https://meli.la/12w2nSd").strip()
 
     try:
         resultado = buscar_produto_por_link(link_teste)
-        print("\n=== SUCESSO AO PROCESSAR PRODUTO ===")
+        print("\n=== PRODUTO PROCESSADO COM SUCESSO ===")
         print("Nome:", resultado.get("productName"))
         print("Preço:", resultado.get("price"))
         print("Item ID:", resultado.get("itemId"))
         print("Imagem:", resultado.get("imageUrl"))
-        print("Link de Afiliado:", resultado.get("affiliateLink"))
+        print("Link de Afiliado Preservado:", resultado.get("affiliateLink"))
     except MercadoLivreAPIError as erro:
-        logger.error("Erro no processamento: %s", erro)
+        logger.error("Falha ao processar link: %s", erro)
