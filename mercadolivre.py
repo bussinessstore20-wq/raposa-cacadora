@@ -34,22 +34,28 @@ class MercadoLivreAPIError(Exception):
 
 
 # ============================================================
-# SESSÃO E REQUISIÇÕES HTTP
+# SESSÃO E REQUISIÇÕES HTTP (COM HEADERS ANTI-403)
 # ============================================================
 
 def _obter_sessao() -> requests.Session:
     """
-    Cria uma sessão HTTP para requisições na API pública do Mercado Livre.
-    Se um token estiver configurado via variável de ambiente, ele será enviado.
-    Caso contrário, fará as requisições públicas sem falhar.
+    Cria uma sessão HTTP com headers idênticos aos de um navegador Chrome real em desktop.
+    Isso evita o bloqueio HTTP 403 (PolicyAgent) em servidores de hospedagem como o Render.
     """
     session = requests.Session()
     access_token = os.getenv("MERCADOLIVRE_ACCESS_TOKEN", "").strip()
 
     headers = {
         "User-Agent": DEFAULT_USER_AGENT,
-        "Accept": "application/json, text/html, */*",
+        "Accept": "application/json, text/plain, */*",
         "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate",
+        "Sec-Ch-Ua": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "cross-site",
     }
 
     if access_token:
@@ -71,12 +77,10 @@ def extrair_item_id_da_string(conteudo: str) -> Optional[str]:
     if not conteudo:
         return None
 
-    # Procura estritamente por MLB seguido de 8 a 10 dígitos
     match = re.search(r"MLB[-_]?(\d{8,10})", conteudo, re.IGNORECASE)
     if match:
         return f"MLB{match.group(1)}".upper()
 
-    # Busca em parâmetros query se for uma URL
     try:
         parsed = urlparse(conteudo)
         if parsed.query:
@@ -159,7 +163,7 @@ def resolver_link_e_extrair_id(link: str) -> Tuple[str, str]:
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Busca 1: Varre todas as tags de link <a> na vitrine
+        # Varre todas as tags de link <a> na vitrine
         for tag_a in soup.find_all("a", href=True):
             href = tag_a["href"]
             id_encontrado = extrair_item_id_da_string(href)
@@ -167,7 +171,7 @@ def resolver_link_e_extrair_id(link: str) -> Tuple[str, str]:
                 logger.info("Produto encontrado nos links da vitrine: %s", id_encontrado)
                 return url_final, id_encontrado
 
-        # Busca 2: Regex no HTML completo (para scripts, JSON-LD ou dados renderizados)
+        # Regex no HTML completo (para scripts ou JSON-LD renderizados)
         matches = re.findall(r"MLB[-_]?(\d{8,10})", response.text, re.IGNORECASE)
         if matches:
             id_encontrado = f"MLB{matches[0]}".upper()
@@ -180,7 +184,7 @@ def resolver_link_e_extrair_id(link: str) -> Tuple[str, str]:
 
 
 # ============================================================
-# CONSULTA DE PRODUTOS VIA API PÚBLICA
+# CONSULTA DE PRODUTOS (API + FALLBACK WEB SCRAPING)
 # ============================================================
 
 def _api_get(endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -213,14 +217,69 @@ def _api_get(endpoint: str, params: Optional[Dict[str, Any]] = None) -> Dict[str
         ) from erro
 
 
+def _consultar_item_via_web(item_id: str) -> Dict[str, Any]:
+    """
+    Fallback: Raspa as informações do produto diretamente da página web do anúncio
+    caso a API retorne bloqueio 403.
+    """
+    url_produto = f"https://produto.mercadolivre.com.br/{item_id}"
+    logger.info("Iniciando fallback de raspagem Web do anúncio: %s", url_produto)
+    
+    session = _obter_sessao()
+    
+    try:
+        res = session.get(url_produto, timeout=30)
+        if res.status_code != 200:
+            raise MercadoLivreAPIError(f"Erro ao acessar página web do produto: HTTP {res.status_code}")
+
+        soup = BeautifulSoup(res.text, "html.parser")
+        
+        # Título
+        titulo_elem = soup.find("h1", class_="ui-pdp-title")
+        titulo = titulo_elem.text.strip() if titulo_elem else "Produto Mercado Livre"
+
+        # Imagem principal
+        imageUrl = None
+        img_elem = soup.find("img", class_="ui-pdp-image")
+        if img_elem:
+            imageUrl = img_elem.get("src") or img_elem.get("data-zoom")
+
+        # Preço
+        preco = None
+        preco_elem = soup.find("meta", itemprop="price")
+        if preco_elem and preco_elem.get("content"):
+            try:
+                preco = float(preco_elem["content"])
+            except ValueError:
+                pass
+
+        return {
+            "id": item_id,
+            "title": titulo,
+            "price": preco,
+            "pictures": [{"secure_url": imageUrl}] if imageUrl else [],
+            "permalink": url_produto,
+            "condition": "new",
+        }
+    except Exception as erro:
+        raise MercadoLivreAPIError(f"Falha ao raspas dados web do produto {item_id}: {erro}") from erro
+
+
 def _consultar_item(item_id: str) -> Dict[str, Any]:
-    """Consulta as informações públicas de um anúncio através do seu MLB."""
+    """Consulta as informações do produto via API com fallback para raspagem Web."""
     item_id = str(item_id).strip().upper()
 
     if not re.fullmatch(r"MLB\d{8,10}", item_id):
         raise MercadoLivreAPIError(f"Formato de Item ID inválido para API: {item_id}")
 
-    return _api_get(f"/items/{item_id}")
+    try:
+        return _api_get(f"/items/{item_id}")
+    except MercadoLivreAPIError as erro:
+        # Se for bloqueado pelo PolicyAgent (403), aciona a raspagem na página do produto
+        if "403" in str(erro):
+            logger.warning("API bloqueada com 403. Executando fallback via Web para o item %s...", item_id)
+            return _consultar_item_via_web(item_id)
+        raise erro
 
 
 # ============================================================
@@ -241,7 +300,7 @@ def buscar_produto_por_ids(item_id: Any, shop_id: Optional[str] = None) -> Optio
     item_id_retorno = produto_api.get("id") or item_id_normalizado
     seller_id = produto_api.get("seller_id")
 
-    # Extração de imagem principal
+    # Extração da imagem principal
     image_url = None
     pictures = produto_api.get("pictures") or []
     if pictures and isinstance(pictures[0], dict):
@@ -305,10 +364,10 @@ def buscar_produto_por_link(link: str) -> Dict[str, Any]:
 
     link = link.strip()
 
-    # 1. Resolve o link e localiza o MLB do produto
+    # 1. Resolve o link e localiza o MLB do produto na vitrine
     url_final, item_id = resolver_link_e_extrair_id(link)
 
-    # 2. Busca dados públicos do produto na API do Mercado Livre
+    # 2. Busca dados públicos do produto (API ou Web Scraping Fallback)
     produto = buscar_produto_por_ids(item_id=item_id)
 
     if not produto:
@@ -338,8 +397,7 @@ if __name__ == "__main__":
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
 
-    # Teste com a URL encurtada de vitrine
-    link_teste = os.getenv("MERCADOLIVRE_LINK_TESTE", "https://meli.la/12w2nSd").strip()
+    link_teste = os.getenv("MERCADOLIVRE_LINK_TESTE", "https://meli.la/1rA5yN4").strip()
 
     try:
         resultado = buscar_produto_por_link(link_teste)
