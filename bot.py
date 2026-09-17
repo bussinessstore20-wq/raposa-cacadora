@@ -1047,15 +1047,16 @@ async def enviar_notificacao_admin(
 # PROCESSAR PRODUTO
 # ============================================================
 
+# Certifique-se de importar a função do Mercado Livre no topo do arquivo bot.py:
 from mercadolivre import buscar_produto_por_link as buscar_produto_ml
-# certifique-se de importar a sua função da Shopee existente no seu projeto
-# ex: from shopee import buscar_produto_por_link as buscar_produto_shopee
+# E mantenha a importação da sua função da Shopee (exemplo):
+# from shopee import buscar_produto_por_link as buscar_produto_shopee
+
 
 async def processar_produto(
     bot: Bot,
     produto_fila: dict[str, Any],
 ):
-
     produto_id = produto_fila["id"]
     link = produto_fila["link"]
 
@@ -1063,25 +1064,29 @@ async def processar_produto(
     logger.info("Processando produto ID %s", produto_id)
     logger.info("Link: %s", link)
 
-    # 1. IDENTIFICAR A PLATAFORMA PELO LINK
+    # ----------------------------------------------------
+    # IDENTIFICAÇÃO DA PLATAFORMA PELO DOMÍNIO DO LINK
+    # ----------------------------------------------------
     link_lower = link.lower().strip()
 
-    if any(dominio in link_lower for dominio in ["meli.la", "mercadolivre.com", "mercadolibre.com"]):
-        logger.info("Plataforma identificada: Mercado Livre")
+    if any(dom in link_lower for dom in ["meli.la", "mercadolivre.com", "mercadolibre.com"]):
+        logger.info("Plataforma detectada: Mercado Livre")
         dados_produto = await asyncio.to_thread(
             buscar_produto_ml,
             link
         )
 
     elif "shopee" in link_lower:
-        logger.info("Plataforma identificada: Shopee")
+        logger.info("Plataforma detectada: Shopee")
         dados_produto = await asyncio.to_thread(
-            buscar_produto_shopee, # <--- nome da sua função original da Shopee
+            buscar_produto_shopee,  # Nome da sua função original da Shopee
             link
         )
 
     else:
-        raise ValueError(f"Link de plataforma não suportada: {link}")
+        raise ValueError(f"Plataforma não suportada para o link: {link}")
+
+    # Segue o fluxo normal de envio para o Telegram e atualização no Supabase...
 
     # ========================================================
     # RESERVAR PRODUTO
