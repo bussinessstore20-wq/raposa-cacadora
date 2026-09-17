@@ -1,0 +1,44 @@
+services:
+  - type: worker
+    name: raposa-cacadora
+    runtime: python
+
+    buildCommand: pip install -r requirements.txt
+
+    startCommand: python bot.py
+
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+
+      # =====================================================
+      # MERCADO LIVRE
+      # =====================================================
+
+      - key: MERCADOLIVRE_ACCESS_TOKEN
+        sync: false
+
+      # =====================================================
+      # CONFIGURAÇÕES DO BOT
+      # =====================================================
+
+      - key: PRODUTOS_POR_CICLO
+        value: "1"
+
+      - key: INTERVALO_MINUTOS
+        value: "20"
+
+      - key: DESCONTO_MINIMO
+        value: "30"
+
+      - key: AVALIACAO_MINIMA
+        value: "4.5"
+
+      - key: VENDAS_MINIMAS
+        value: "0"
+
+      - key: COMISSAO_MINIMA
+        value: "0"
