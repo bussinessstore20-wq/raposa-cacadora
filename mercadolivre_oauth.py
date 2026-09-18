@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlencode
 
 import requests
-from supabase import Client, create_client
+from supabase import Client
 
 
 logger = logging.getLogger(__name__)
@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # CONFIGURAÇÃO
 # ============================================================
+
+MERCADOLIVRE_AUTH_URL = (
+    "https://auth.mercadolivre.com.br/authorization"
+)
+
+MERCADOLIVRE_TOKEN_URL = (
+    "https://api.mercadolibre.com/oauth/token"
+)
 
 MERCADOLIVRE_CLIENT_ID = os.getenv(
     "MERCADOLIVRE_CLIENT_ID",
@@ -33,192 +41,64 @@ MERCADOLIVRE_REDIRECT_URI = os.getenv(
     "https://raposa-cacadora.onrender.com/mercadolivre/callback",
 ).strip()
 
-SUPABASE_URL = os.getenv(
-    "SUPABASE_URL",
-    "",
-).strip()
 
-SUPABASE_KEY = os.getenv(
-    "SUPABASE_KEY",
-    "",
-).strip()
+# ============================================================
+# SEGURANÇA
+# ============================================================
+
+STATE_EXPIRATION_SECONDS = 10 * 60
+
+# Renova antes do vencimento real.
+# 5 minutos evita que uma requisição pegue um token quase expirado.
+TOKEN_REFRESH_MARGIN_SECONDS = 5 * 60
+
+HTTP_TIMEOUT = 30
+
+TOKEN_TABLE = "mercadolivre_oauth_tokens"
+
+STATE_LOCK = threading.Lock()
+
+# state -> timestamp
+_OAUTH_STATES: dict[str, float] = {}
+
+# Lock para evitar duas renovações simultâneas do refresh_token.
+_REFRESH_LOCK = threading.Lock()
 
 
 # ============================================================
-# ENDPOINTS OFICIAIS DO MERCADO LIVRE
-# ============================================================
-
-OAUTH_AUTHORIZE_URL = (
-    "https://auth.mercadolivre.com.br/authorization"
-)
-
-OAUTH_TOKEN_URL = (
-    "https://api.mercadolibre.com/oauth/token"
-)
-
-
-# ============================================================
-# CONFIGURAÇÕES DE SEGURANÇA
-# ============================================================
-
-TOKEN_TABLE = "mercadolivre_tokens"
-
-REQUEST_TIMEOUT = 30
-
-# O refresh será realizado quando faltarem 10 minutos
-# ou menos para o access_token expirar.
-TOKEN_REFRESH_MARGIN_SECONDS = 600
-
-# State OAuth permanece válido por 10 minutos.
-STATE_TTL_SECONDS = 600
-
-
-# ============================================================
-# ERRO
-# ============================================================
-
-class MercadoLivreOAuthError(Exception):
-    """Erro relacionado ao OAuth do Mercado Livre."""
-
-
-# ============================================================
-# CLIENTE SUPABASE
+# SUPABASE
 # ============================================================
 
 _supabase: Optional[Client] = None
 
-_supabase_lock = threading.Lock()
+
+def configurar_supabase(client: Client) -> None:
+    """
+    Recebe o cliente Supabase já inicializado pelo bot.py.
+    """
+    global _supabase
+
+    _supabase = client
+
+    logger.info(
+        "Mercado Livre OAuth conectado ao Supabase."
+    )
 
 
 def _obter_supabase() -> Client:
-    """
-    Retorna o cliente Supabase.
-
-    O cliente é criado apenas uma vez por processo.
-    """
-
-    global _supabase
-
-    if _supabase is not None:
-        return _supabase
-
-    with _supabase_lock:
-
-        if _supabase is not None:
-            return _supabase
-
-        if not SUPABASE_URL:
-            raise MercadoLivreOAuthError(
-                "SUPABASE_URL não configurada."
-            )
-
-        if not SUPABASE_KEY:
-            raise MercadoLivreOAuthError(
-                "SUPABASE_KEY não configurada."
-            )
-
-        _supabase = create_client(
-            SUPABASE_URL,
-            SUPABASE_KEY,
+    if _supabase is None:
+        raise RuntimeError(
+            "Supabase do Mercado Livre OAuth não foi configurado."
         )
 
     return _supabase
 
 
 # ============================================================
-# STATE OAUTH
-# ============================================================
-
-_states: Dict[str, float] = {}
-
-_states_lock = threading.Lock()
-
-
-def gerar_state() -> str:
-    """
-    Gera um state criptograficamente seguro.
-
-    O state é armazenado temporariamente em memória.
-    """
-
-    state = secrets.token_urlsafe(32)
-
-    agora = time.time()
-
-    with _states_lock:
-
-        # Remove states expirados.
-        expirados = [
-            chave
-            for chave, timestamp in _states.items()
-            if agora - timestamp > STATE_TTL_SECONDS
-        ]
-
-        for chave in expirados:
-            _states.pop(
-                chave,
-                None,
-            )
-
-        _states[state] = agora
-
-    return state
-
-
-def validar_e_consumir_state(
-    state: str,
-) -> bool:
-    """
-    Valida o state recebido pelo callback.
-
-    O state é de uso único.
-    Depois de validado, é removido da memória.
-    """
-
-    if not state:
-        return False
-
-    agora = time.time()
-
-    with _states_lock:
-
-        timestamp = _states.get(
-            state
-        )
-
-        if timestamp is None:
-            return False
-
-        if (
-            agora - timestamp
-            > STATE_TTL_SECONDS
-        ):
-            _states.pop(
-                state,
-                None,
-            )
-
-            return False
-
-        # State de uso único.
-        _states.pop(
-            state,
-            None,
-        )
-
-        return True
-
-
-# ============================================================
-# CONFIGURAÇÃO DO OAUTH
+# CONFIGURAÇÃO
 # ============================================================
 
 def validar_configuracao_oauth() -> None:
-    """
-    Verifica se todas as variáveis necessárias
-    para o OAuth estão configuradas.
-    """
-
     erros = []
 
     if not MERCADOLIVRE_CLIENT_ID:
@@ -236,31 +116,80 @@ def validar_configuracao_oauth() -> None:
             "MERCADOLIVRE_REDIRECT_URI não configurado."
         )
 
-    if not SUPABASE_URL:
-        erros.append(
-            "SUPABASE_URL não configurada."
-        )
-
-    if not SUPABASE_KEY:
-        erros.append(
-            "SUPABASE_KEY não configurada."
-        )
-
     if erros:
-        raise MercadoLivreOAuthError(
-            " | ".join(erros)
+        raise RuntimeError(
+            "Configuração OAuth do Mercado Livre inválida: "
+            + " ".join(erros)
         )
 
 
 # ============================================================
-# URL DE AUTORIZAÇÃO
+# STATE
 # ============================================================
 
-def obter_url_autorizacao() -> str:
-    """
-    Gera a URL para iniciar a autorização OAuth.
-    """
+def _limpar_states_expirados() -> None:
+    agora = time.time()
 
+    with STATE_LOCK:
+        expirados = [
+            state
+            for state, criado_em in _OAUTH_STATES.items()
+            if agora - criado_em > STATE_EXPIRATION_SECONDS
+        ]
+
+        for state in expirados:
+            _OAUTH_STATES.pop(state, None)
+
+
+def gerar_state() -> str:
+    """
+    Gera um state criptograficamente seguro.
+    """
+    _limpar_states_expirados()
+
+    state = secrets.token_urlsafe(48)
+
+    with STATE_LOCK:
+        _OAUTH_STATES[state] = time.time()
+
+    return state
+
+
+def validar_e_consumir_state(state: str) -> bool:
+    """
+    Valida o state e o consome.
+
+    O consumo é importante para impedir reutilização do callback.
+    """
+    if not state:
+        return False
+
+    _limpar_states_expirados()
+
+    with STATE_LOCK:
+        criado_em = _OAUTH_STATES.get(state)
+
+        if criado_em is None:
+            return False
+
+        if time.time() - criado_em > STATE_EXPIRATION_SECONDS:
+            _OAUTH_STATES.pop(state, None)
+            return False
+
+        # State de uso único.
+        _OAUTH_STATES.pop(state, None)
+
+        return True
+
+
+# ============================================================
+# LOGIN
+# ============================================================
+
+def criar_url_autorizacao() -> str:
+    """
+    Cria a URL para iniciar a autorização no Mercado Livre.
+    """
     validar_configuracao_oauth()
 
     state = gerar_state()
@@ -273,13 +202,13 @@ def obter_url_autorizacao() -> str:
     }
 
     return (
-        f"{OAUTH_AUTHORIZE_URL}?"
-        f"{urlencode(parametros)}"
+        f"{MERCADOLIVRE_AUTH_URL}"
+        f"?{urlencode(parametros)}"
     )
 
 
 # ============================================================
-# POST NO ENDPOINT DE TOKEN
+# HTTP TOKEN
 # ============================================================
 
 def _post_token(
@@ -287,224 +216,101 @@ def _post_token(
 ) -> Dict[str, Any]:
     """
     Executa POST no endpoint OAuth do Mercado Livre.
-
-    Nunca registra os dados enviados porque eles podem
-    conter client_secret, access_token ou refresh_token.
     """
+    validar_configuracao_oauth()
+
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "Raposa-Cacadora/1.0",
+    }
 
     try:
-
-        resposta = requests.post(
-            OAUTH_TOKEN_URL,
+        response = requests.post(
+            MERCADOLIVRE_TOKEN_URL,
             data=dados,
-            headers={
-                "Accept": "application/json",
-                "Content-Type": (
-                    "application/x-www-form-urlencoded"
-                ),
-            },
-            timeout=REQUEST_TIMEOUT,
+            headers=headers,
+            timeout=HTTP_TIMEOUT,
         )
 
     except requests.RequestException as erro:
-
         logger.error(
-            "Erro de conexão com o OAuth do Mercado Livre."
+            "Erro de conexão com OAuth do Mercado Livre: %s",
+            erro,
         )
 
-        raise MercadoLivreOAuthError(
-            "Erro de conexão com o Mercado Livre."
+        raise RuntimeError(
+            "Não foi possível conectar ao OAuth do Mercado Livre."
         ) from erro
 
-    if resposta.status_code != 200:
-
+    if response.status_code != 200:
+        # Não registrar response.text porque uma resposta de erro
+        # pode eventualmente conter informações sensíveis.
         logger.error(
-            "OAuth do Mercado Livre retornou HTTP %s.",
-            resposta.status_code,
+            "OAuth Mercado Livre retornou HTTP %d.",
+            response.status_code,
         )
 
-        # Tentamos obter apenas uma mensagem de erro.
-        # Nunca registramos o corpo completo.
-        try:
-
-            erro_json = resposta.json()
-
-            mensagem = (
-                erro_json.get("error")
-                or erro_json.get("message")
-                or "erro desconhecido"
-            )
-
-        except ValueError:
-
-            mensagem = (
-                "resposta inválida"
-            )
-
-        raise MercadoLivreOAuthError(
-            f"Falha no OAuth do Mercado Livre: {mensagem}"
+        raise RuntimeError(
+            f"Mercado Livre OAuth retornou HTTP "
+            f"{response.status_code}."
         )
 
     try:
-
-        dados_resposta = resposta.json()
+        resposta = response.json()
 
     except ValueError as erro:
-
-        raise MercadoLivreOAuthError(
-            "Mercado Livre retornou uma resposta OAuth inválida."
+        raise RuntimeError(
+            "Mercado Livre retornou resposta OAuth inválida."
         ) from erro
 
-    if not isinstance(
-        dados_resposta,
-        dict,
-    ):
-        raise MercadoLivreOAuthError(
-            "Resposta OAuth inesperada."
+    if not isinstance(resposta, dict):
+        raise RuntimeError(
+            "Resposta OAuth do Mercado Livre não é um objeto JSON."
         )
 
-    if not dados_resposta.get(
-        "access_token"
-    ):
-        raise MercadoLivreOAuthError(
-            "Resposta OAuth não contém access_token."
-        )
-
-    if not dados_resposta.get(
-        "refresh_token"
-    ):
-        raise MercadoLivreOAuthError(
-            "Resposta OAuth não contém refresh_token."
-        )
-
-    return dados_resposta
+    return resposta
 
 
 # ============================================================
-# TROCAR AUTHORIZATION CODE POR TOKENS
+# SALVAR TOKEN
 # ============================================================
 
-def trocar_code_por_tokens(
-    code: str,
-) -> Dict[str, Any]:
-    """
-    Troca o authorization code recebido pelo Mercado Livre
-    por access_token e refresh_token.
-    """
-
-    if not code:
-        raise MercadoLivreOAuthError(
-            "Authorization code vazio."
-        )
-
-    validar_configuracao_oauth()
-
-    dados = {
-        "grant_type": "authorization_code",
-        "client_id": MERCADOLIVRE_CLIENT_ID,
-        "client_secret": MERCADOLIVRE_CLIENT_SECRET,
-        "code": code,
-        "redirect_uri": MERCADOLIVRE_REDIRECT_URI,
-    }
-
-    return _post_token(
-        dados
-    )
-
-
-# ============================================================
-# CALCULAR DATA DE EXPIRAÇÃO
-# ============================================================
-
-def _calcular_expires_at(
-    expires_in: Any,
-) -> str:
-    """
-    Converte expires_in em uma data/hora UTC.
-    """
-
-    try:
-        segundos = int(
-            expires_in
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-        segundos = 0
-
-    agora = datetime.now(
-        timezone.utc
-    )
-
-    timestamp = (
-        agora.timestamp()
-        + max(
-            segundos,
-            0,
-        )
-    )
-
-    return datetime.fromtimestamp(
-        timestamp,
-        tz=timezone.utc,
-    ).isoformat()
-
-
-# ============================================================
-# SALVAR TOKENS NO SUPABASE
-# ============================================================
-
-def salvar_tokens(
-    token_data: Dict[str, Any],
+def _salvar_tokens(
+    tokens: Dict[str, Any],
 ) -> None:
     """
-    Salva os tokens no Supabase.
+    Salva/atualiza os tokens no Supabase.
 
-    O registro usa id=1 porque esta aplicação possui
-    uma única autorização do Mercado Livre.
-
-    Se o Mercado Livre fornecer um novo refresh_token,
-    ele substitui automaticamente o anterior.
+    O ID fixo 1 transforma a tabela em um armazenamento singleton
+    para a conta Mercado Livre conectada ao bot.
     """
+    supabase = _obter_supabase()
 
-    access_token = token_data.get(
-        "access_token"
-    )
+    access_token = str(
+        tokens.get("access_token") or ""
+    ).strip()
 
-    refresh_token = token_data.get(
-        "refresh_token"
-    )
+    refresh_token = str(
+        tokens.get("refresh_token") or ""
+    ).strip()
 
     if not access_token:
-        raise MercadoLivreOAuthError(
-            "Não é possível salvar token sem access_token."
+        raise RuntimeError(
+            "Resposta do Mercado Livre não contém access_token."
         )
 
     if not refresh_token:
-        raise MercadoLivreOAuthError(
-            "Não é possível salvar token sem refresh_token."
+        raise RuntimeError(
+            "Resposta do Mercado Livre não contém refresh_token."
         )
 
-    try:
+    expires_in = int(
+        tokens.get("expires_in") or 0
+    )
 
-        expires_in = int(
-            token_data.get(
-                "expires_in",
-                0,
-            ) or 0
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-
-        expires_in = 0
-
-    expires_at = _calcular_expires_at(
-        expires_in
+    expires_at = int(
+        time.time() + expires_in
     )
 
     agora = datetime.now(
@@ -513,37 +319,20 @@ def salvar_tokens(
 
     dados = {
         "id": 1,
-
         "access_token": access_token,
-
         "refresh_token": refresh_token,
-
         "expires_in": expires_in,
-
         "expires_at": expires_at,
-
-        "user_id": token_data.get(
-            "user_id"
-        ),
-
-        "token_type": token_data.get(
-            "token_type"
-        ),
-
-        "scope": token_data.get(
-            "scope"
-        ),
-
+        "user_id": tokens.get("user_id"),
+        "token_type": tokens.get("token_type") or "bearer",
+        "scope": tokens.get("scope"),
         "updated_at": agora,
     }
 
     try:
-
         (
-            _obter_supabase()
-            .table(
-                TOKEN_TABLE
-            )
+            supabase
+            .table(TOKEN_TABLE)
             .upsert(
                 dados,
                 on_conflict="id",
@@ -552,63 +341,46 @@ def salvar_tokens(
         )
 
     except Exception as erro:
-
         logger.exception(
-            "Erro ao salvar tokens do Mercado Livre no Supabase."
+            "Erro ao salvar token do Mercado Livre no Supabase."
         )
 
-        raise MercadoLivreOAuthError(
+        raise RuntimeError(
             "Não foi possível salvar os tokens no Supabase."
         ) from erro
 
+    logger.info(
+        "Tokens do Mercado Livre atualizados no Supabase."
+    )
+
 
 # ============================================================
-# OBTER TOKENS DO SUPABASE
+# RECUPERAR TOKEN
 # ============================================================
 
-def _obter_token_salvo() -> Optional[Dict[str, Any]]:
-    """
-    Obtém o registro OAuth salvo no Supabase.
-
-    Nunca registra os tokens nos logs.
-    """
+def _obter_registro_token() -> Optional[Dict[str, Any]]:
+    supabase = _obter_supabase()
 
     try:
-
         resposta = (
-            _obter_supabase()
-            .table(
-                TOKEN_TABLE
-            )
+            supabase
+            .table(TOKEN_TABLE)
             .select(
-                "id,"
-                "access_token,"
-                "refresh_token,"
-                "expires_in,"
-                "expires_at,"
-                "user_id,"
-                "token_type,"
-                "scope,"
-                "updated_at"
+                "id,access_token,refresh_token,expires_in,"
+                "expires_at,user_id,token_type,scope,updated_at"
             )
-            .eq(
-                "id",
-                1,
-            )
-            .limit(
-                1
-            )
+            .eq("id", 1)
+            .limit(1)
             .execute()
         )
 
     except Exception as erro:
-
         logger.exception(
-            "Erro ao consultar tokens do Mercado Livre no Supabase."
+            "Erro ao consultar token do Mercado Livre."
         )
 
-        raise MercadoLivreOAuthError(
-            "Não foi possível consultar os tokens."
+        raise RuntimeError(
+            "Não foi possível consultar o token do Mercado Livre."
         ) from erro
 
     if not resposta.data:
@@ -618,110 +390,26 @@ def _obter_token_salvo() -> Optional[Dict[str, Any]]:
 
 
 # ============================================================
-# VERIFICAR VALIDADE DO ACCESS TOKEN
-# ============================================================
-
-def _token_ainda_valido(
-    token_data: Dict[str, Any],
-) -> bool:
-    """
-    Verifica se o access_token ainda possui uma margem
-    segura antes da expiração.
-    """
-
-    expires_at = token_data.get(
-        "expires_at"
-    )
-
-    if not expires_at:
-        return False
-
-    try:
-
-        texto = str(
-            expires_at
-        ).replace(
-            "Z",
-            "+00:00",
-        )
-
-        data_expiracao = (
-            datetime.fromisoformat(
-                texto
-            )
-        )
-
-        if data_expiracao.tzinfo is None:
-
-            data_expiracao = (
-                data_expiracao.replace(
-                    tzinfo=timezone.utc
-                )
-            )
-
-        agora = datetime.now(
-            timezone.utc
-        )
-
-        segundos_restantes = (
-            data_expiracao - agora
-        ).total_seconds()
-
-        return (
-            segundos_restantes
-            > TOKEN_REFRESH_MARGIN_SECONDS
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-
-        return False
-
-
-# ============================================================
 # REFRESH TOKEN
 # ============================================================
 
-_refresh_lock = threading.Lock()
-
-
-def renovar_access_token_mercadolivre(
-    token_data: Optional[Dict[str, Any]] = None,
+def _renovar_access_token(
+    registro: Dict[str, Any],
 ) -> str:
     """
-    Renova o access_token utilizando o refresh_token.
+    Renova o access token.
 
     IMPORTANTE:
-
-    O Mercado Livre pode fornecer um novo refresh_token.
-    O novo registro é salvo integralmente no Supabase,
-    substituindo o refresh_token anterior.
+    O Mercado Livre usa refresh token rotativo.
+    Portanto o novo refresh_token substitui imediatamente o anterior.
     """
-
-    validar_configuracao_oauth()
-
-    if token_data is None:
-
-        token_data = (
-            _obter_token_salvo()
-        )
-
-    if not token_data:
-
-        raise MercadoLivreOAuthError(
-            "Nenhuma autorização do Mercado Livre foi encontrada."
-        )
-
-    refresh_token = token_data.get(
-        "refresh_token"
-    )
+    refresh_token = str(
+        registro.get("refresh_token") or ""
+    ).strip()
 
     if not refresh_token:
-
-        raise MercadoLivreOAuthError(
-            "Refresh token não encontrado."
+        raise RuntimeError(
+            "Não existe refresh_token salvo no Supabase."
         )
 
     dados = {
@@ -731,249 +419,233 @@ def renovar_access_token_mercadolivre(
         "refresh_token": refresh_token,
     }
 
-    novo_token = _post_token(
-        dados
-    )
+    resposta = _post_token(dados)
 
-    # O novo access_token e o novo refresh_token
-    # substituem os valores anteriores.
-    salvar_tokens(
-        novo_token
-    )
+    novo_access_token = str(
+        resposta.get("access_token") or ""
+    ).strip()
+
+    novo_refresh_token = str(
+        resposta.get("refresh_token") or ""
+    ).strip()
+
+    if not novo_access_token:
+        raise RuntimeError(
+            "Refresh do Mercado Livre não retornou access_token."
+        )
+
+    if not novo_refresh_token:
+        raise RuntimeError(
+            "Refresh do Mercado Livre não retornou novo refresh_token."
+        )
+
+    # Salva o NOVO refresh token.
+    _salvar_tokens(resposta)
 
     logger.info(
         "Access token do Mercado Livre renovado com sucesso."
     )
 
-    return str(
-        novo_token[
-            "access_token"
-        ]
-    )
+    return novo_access_token
 
 
 # ============================================================
-# FUNÇÃO CENTRALIZADA
+# OBTER ACCESS TOKEN ATUAL
 # ============================================================
 
 def obter_access_token_mercadolivre() -> str:
     """
-    Retorna sempre um access_token utilizável.
+    Retorna um access_token válido.
 
     Fluxo:
 
-    1. Consulta Supabase.
-    2. Verifica validade.
-    3. Se estiver válido, retorna o token.
-    4. Se estiver próximo da expiração, faz refresh.
-    5. Salva access_token + refresh_token novos.
-    6. Retorna o novo access_token.
+    1. Busca token no Supabase.
+    2. Verifica expiração.
+    3. Se ainda estiver válido, retorna.
+    4. Se estiver próximo de expirar, executa refresh.
     """
+    registro = _obter_registro_token()
 
-    token_data = (
-        _obter_token_salvo()
-    )
-
-    # --------------------------------------------------------
-    # Compatibilidade com instalações antigas
-    # --------------------------------------------------------
-
-    if not token_data:
-
-        token_legado = os.getenv(
+    if not registro:
+        # Compatibilidade temporária com instalação antiga.
+        token_legacy = os.getenv(
             "MERCADOLIVRE_ACCESS_TOKEN",
             "",
         ).strip()
 
-        if token_legado:
-
+        if token_legacy:
             logger.warning(
                 "Usando MERCADOLIVRE_ACCESS_TOKEN legado. "
-                "Conclua o OAuth para migrar para o armazenamento "
-                "persistente no Supabase."
+                "Recomenda-se concluir o OAuth."
             )
 
-            return token_legado
+            return token_legacy
 
-        raise MercadoLivreOAuthError(
-            "Mercado Livre não autorizado. "
+        raise RuntimeError(
+            "Mercado Livre não está conectado. "
             "Acesse /mercadolivre/login."
         )
 
-    # --------------------------------------------------------
-    # Token ainda válido
-    # --------------------------------------------------------
+    access_token = str(
+        registro.get("access_token") or ""
+    ).strip()
 
-    if _token_ainda_valido(
-        token_data
+    expires_at = int(
+        registro.get("expires_at") or 0
+    )
+
+    agora = int(
+        time.time()
+    )
+
+    if access_token and (
+        expires_at > agora + TOKEN_REFRESH_MARGIN_SECONDS
     ):
+        return access_token
 
-        access_token = (
-            token_data.get(
-                "access_token"
+    # Apenas uma thread pode usar o refresh_token por vez.
+    with _REFRESH_LOCK:
+
+        # Outra thread pode ter renovado enquanto esperávamos.
+        registro_atualizado = _obter_registro_token()
+
+        if not registro_atualizado:
+            raise RuntimeError(
+                "Token do Mercado Livre desapareceu do Supabase."
             )
+
+        access_token_atualizado = str(
+            registro_atualizado.get("access_token") or ""
+        ).strip()
+
+        expires_at_atualizado = int(
+            registro_atualizado.get("expires_at") or 0
         )
 
-        if access_token:
-
-            return str(
-                access_token
-            )
-
-    # --------------------------------------------------------
-    # Token próximo da expiração
-    # --------------------------------------------------------
-
-    with _refresh_lock:
-
-        # Outra thread pode ter feito refresh
-        # enquanto esta aguardava o lock.
-        token_atual = (
-            _obter_token_salvo()
+        agora = int(
+            time.time()
         )
 
-        if (
-            token_atual
-            and _token_ainda_valido(
-                token_atual
-            )
+        if access_token_atualizado and (
+            expires_at_atualizado
+            > agora + TOKEN_REFRESH_MARGIN_SECONDS
         ):
+            return access_token_atualizado
 
-            access_token = (
-                token_atual.get(
-                    "access_token"
-                )
-            )
-
-            if access_token:
-
-                return str(
-                    access_token
-                )
-
-        return (
-            renovar_access_token_mercadolivre(
-                token_atual
-            )
+        return _renovar_access_token(
+            registro_atualizado
         )
 
 
 # ============================================================
-# PROCESSAR CALLBACK
+# CALLBACK
 # ============================================================
 
-def processar_callback_mercadolivre(
+def processar_callback(
     code: str,
     state: str,
 ) -> Dict[str, Any]:
     """
-    Processa o callback OAuth.
-
-    Primeiro valida o state.
-    Somente depois troca o code por tokens.
+    Valida state e troca o authorization code por tokens.
     """
+    validar_configuracao_oauth()
 
     if not code:
-
-        raise MercadoLivreOAuthError(
-            "Authorization code não recebido."
+        raise ValueError(
+            "Authorization code não informado."
         )
 
     if not state:
-
-        raise MercadoLivreOAuthError(
-            "State OAuth não recebido."
+        raise ValueError(
+            "State não informado."
         )
 
-    # --------------------------------------------------------
-    # IMPORTANTE:
-    # Nunca aceitar state arbitrário.
-    # --------------------------------------------------------
-
-    if not validar_e_consumir_state(
-        state
-    ):
-
-        raise MercadoLivreOAuthError(
-            "State OAuth inválido ou expirado."
+    if not validar_e_consumir_state(state):
+        raise ValueError(
+            "State inválido, expirado ou já utilizado."
         )
 
-    # --------------------------------------------------------
-    # Trocar code por tokens
-    # --------------------------------------------------------
+    dados = {
+        "grant_type": "authorization_code",
+        "client_id": MERCADOLIVRE_CLIENT_ID,
+        "client_secret": MERCADOLIVRE_CLIENT_SECRET,
+        "code": code,
+        "redirect_uri": MERCADOLIVRE_REDIRECT_URI,
+    }
 
-    tokens = (
-        trocar_code_por_tokens(
-            code
-        )
+    tokens = _post_token(
+        dados
     )
 
-    # --------------------------------------------------------
-    # Persistir no Supabase
-    # --------------------------------------------------------
-
-    salvar_tokens(
+    _salvar_tokens(
         tokens
     )
 
     logger.info(
-        "Autorização do Mercado Livre concluída. user_id=%s",
-        tokens.get(
-            "user_id"
-        ),
+        "Autorização do Mercado Livre concluída."
     )
 
-    return tokens
+    # Não devolvemos access_token ou refresh_token.
+    return {
+        "user_id": tokens.get("user_id"),
+        "expires_in": tokens.get("expires_in"),
+        "scope": tokens.get("scope"),
+        "token_type": tokens.get("token_type"),
+    }
 
 
 # ============================================================
-# STATUS SEGURO
+# STATUS
 # ============================================================
 
 def obter_status_mercadolivre() -> Dict[str, Any]:
     """
     Retorna somente informações seguras.
-
-    Nunca retorna:
-    - access_token
-    - refresh_token
-    - client_secret
     """
+    registro = _obter_registro_token()
 
-    token_data = (
-        _obter_token_salvo()
-    )
-
-    if not token_data:
-
+    if not registro:
         return {
-            "connected": False,
+            "conectado": False,
             "user_id": None,
-            "expires_at": None,
-            "token_valid": False,
+            "expira_em": None,
         }
 
+    expires_at = int(
+        registro.get("expires_at") or 0
+    )
+
+    agora = int(
+        time.time()
+    )
+
+    segundos_restantes = max(
+        0,
+        expires_at - agora,
+    )
+
+    conectado = bool(
+        registro.get("access_token")
+        and registro.get("refresh_token")
+    )
+
     return {
-        "connected": bool(
-            token_data.get(
-                "access_token"
-            )
-            and token_data.get(
-                "refresh_token"
-            )
+        "conectado": conectado,
+        "user_id": registro.get("user_id"),
+        "expira_em": (
+            datetime.fromtimestamp(
+                expires_at,
+                tz=timezone.utc,
+            ).isoformat()
+            if expires_at
+            else None
         ),
-
-        "user_id": token_data.get(
-            "user_id"
+        "segundos_restantes": segundos_restantes,
+        "precisa_refresh": (
+            segundos_restantes
+            <= TOKEN_REFRESH_MARGIN_SECONDS
         ),
-
-        "expires_at": token_data.get(
-            "expires_at"
-        ),
-
-        "token_valid": (
-            _token_ainda_valido(
-                token_data
-            )
+        "updated_at": registro.get(
+            "updated_at"
         ),
     }
