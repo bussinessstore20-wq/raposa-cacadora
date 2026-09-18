@@ -2225,82 +2225,30 @@ async def worker_publicacao(
 # INICIAR WORKER
 # ============================================================
 
-async def worker_publicacao(
+async def iniciar_worker(
     application: Application,
 ):
+    """
+    Inicia o worker automático.
+    """
 
-    logger.info(
-        "🚀🚀🚀 WORKER DE PUBLICAÇÃO ENTROU NA FUNÇÃO."
+    global worker_task
+
+    if worker_task is not None and not worker_task.done():
+
+        logger.warning(
+            "Worker já está em execução."
+        )
+
+        return
+
+    worker_task = asyncio.create_task(
+        worker_publicacao(application)
     )
 
-    while True:
-
-        try:
-
-            logger.info(
-                "🔎 Worker executando. bot_ativo=%s",
-                bot_ativo,
-            )
-
-            if not bot_ativo:
-
-                logger.info(
-                    "⏸️ Worker pausado porque bot_ativo=False."
-                )
-
-                await asyncio.sleep(5)
-
-                continue
-
-            produto_fila = await asyncio.to_thread(
-                buscar_proximo_produto
-            )
-
-            logger.info(
-                "🔎 Resultado da busca: %s",
-                (
-                    produto_fila.get("id")
-                    if produto_fila
-                    else "NENHUM"
-                ),
-            )
-
-            if not produto_fila:
-
-                await asyncio.sleep(30)
-
-                continue
-
-            logger.info(
-                "📦 ENCONTROU PRODUTO ID=%s",
-                produto_fila["id"],
-            )
-
-            await processar_produto(
-                bot=application.bot,
-                produto_fila=produto_fila,
-            )
-
-            await asyncio.sleep(
-                INTERVALO_MINUTOS * 60
-            )
-
-        except asyncio.CancelledError:
-
-            logger.info(
-                "🛑 Worker cancelado."
-            )
-
-            raise
-
-        except Exception as erro:
-
-            logger.exception(
-                "❌ Erro no worker: %s",
-                erro,
-            )
-
-            await asyncio.sleep(30)
+    logger.info(
+        "Task do worker criada."
+    )
 
 
 # ============================================================
@@ -2347,7 +2295,6 @@ async def parar_worker():
         "Worker encerrado."
     )
 
-
 # ============================================================
 # POST INIT
 # ============================================================
@@ -2371,7 +2318,6 @@ async def post_init(
     logger.info(
         "Serviços inicializados."
     )
-
 
 # ============================================================
 # POST SHUTDOWN
