@@ -2149,7 +2149,7 @@ async def worker_publicacao(
 ):
 
     logger.info(
-        "Worker de publicação iniciado."
+        "🚀 Worker de publicação iniciado."
     )
 
     try:
@@ -2158,10 +2158,14 @@ async def worker_publicacao(
             recuperar_processamentos_presos
         )
 
+        logger.info(
+            "✅ Recuperação de processamentos concluída."
+        )
+
     except Exception as erro:
 
         logger.exception(
-            "Erro ao recuperar processamentos presos: %s",
+            "❌ Erro ao recuperar processamentos presos: %s",
             erro,
         )
 
@@ -2169,7 +2173,16 @@ async def worker_publicacao(
 
         try:
 
+            logger.info(
+                "🔎 Worker verificando fila. bot_ativo=%s",
+                bot_ativo,
+            )
+
             if not bot_ativo:
+
+                logger.info(
+                    "⏸️ Worker pausado: bot_ativo=False."
+                )
 
                 await asyncio.sleep(
                     5
@@ -2186,7 +2199,7 @@ async def worker_publicacao(
             if not produto_fila:
 
                 logger.info(
-                    "Nenhum produto pendente."
+                    "📭 Nenhum produto pending encontrado."
                 )
 
                 await asyncio.sleep(
@@ -2195,30 +2208,43 @@ async def worker_publicacao(
 
                 continue
 
-            await processar_produto(
+            logger.info(
+                "📦 Produto encontrado na fila: ID=%s",
+                produto_fila.get("id"),
+            )
+
+            sucesso = await processar_produto(
                 bot=application.bot,
                 produto_fila=produto_fila,
             )
 
+            if sucesso:
+
+                logger.info(
+                    "✅ Produto ID=%s processado com sucesso.",
+                    produto_fila.get("id"),
+                )
+
+            else:
+
+                logger.warning(
+                    "⚠️ Produto ID=%s não foi publicado.",
+                    produto_fila.get("id"),
+                )
+
             logger.info(
-                "Aguardando %d minutos "
-                "antes do próximo produto.",
+                "⏱️ Aguardando %d minutos antes do próximo produto.",
                 INTERVALO_MINUTOS,
             )
 
-            segundos = (
-                INTERVALO_MINUTOS
-                * 60
-            )
-
             await asyncio.sleep(
-                segundos
+                INTERVALO_MINUTOS * 60
             )
 
         except asyncio.CancelledError:
 
             logger.info(
-                "Worker cancelado."
+                "🛑 Worker cancelado."
             )
 
             raise
@@ -2226,14 +2252,13 @@ async def worker_publicacao(
         except Exception as erro:
 
             logger.exception(
-                "Erro no worker de publicação: %s",
+                "❌ Erro no worker de publicação: %s",
                 erro,
             )
 
-            # Evita que um erro inesperado derrube
-            # permanentemente o worker.
-            await asyncio.sleep(30)
-
+            await asyncio.sleep(
+                30
+            )
 
 # ============================================================
 # INICIAR WORKER
