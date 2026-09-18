@@ -1225,20 +1225,14 @@ async def enviar_notificacao_admin(
     bot: Bot,
     texto: str,
 ):
-
     try:
-
         await bot.send_message(
-            chat_id=int(
-                TELEGRAM_ADMIN_ID
-            ),
+            chat_id=int(TELEGRAM_ADMIN_ID),
             text=texto,
-            parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
         )
 
     except Exception as erro:
-
         logger.warning(
             "Não foi possível notificar admin: %s",
             erro,
