@@ -2,10 +2,14 @@ import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
+
 from urllib.parse import urljoin, urlparse
 
-import requests
 from bs4 import BeautifulSoup
+from playwright.sync_api import (
+    sync_playwright,
+    TimeoutError as PlaywrightTimeoutError,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -16,6 +20,8 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 HTTP_TIMEOUT = 30
+
+PLAYWRIGHT_TIMEOUT = HTTP_TIMEOUT * 1000
 
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -30,37 +36,6 @@ DEFAULT_USER_AGENT = (
 
 class MercadoLivreAPIError(Exception):
     pass
-
-
-# ============================================================
-# SESSÃO WEB
-# ============================================================
-
-def _obter_sessao_web() -> requests.Session:
-
-    session = requests.Session()
-
-    session.headers.update(
-        {
-            "User-Agent": DEFAULT_USER_AGENT,
-            "Accept": (
-                "text/html,application/xhtml+xml,"
-                "application/xml;q=0.9,"
-                "image/avif,image/webp,*/*;q=0.8"
-            ),
-            "Accept-Language": (
-                "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
-            ),
-            "Accept-Encoding": (
-                "gzip, deflate"
-            ),
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-            "Upgrade-Insecure-Requests": "1",
-        }
-    )
-
-    return session
 
 
 # ============================================================
@@ -81,6 +56,7 @@ def extrair_item_id_da_string(
     )
 
     if match:
+
         return (
             f"MLB{match.group(1)}"
             .upper()
@@ -139,6 +115,7 @@ def _eh_link_mercadolivre(
         )
 
     except Exception:
+
         return False
 
     return (
@@ -168,7 +145,10 @@ def _eh_account_verification(
 
 
 # ============================================================
-# EXTRAIR LINK DO PRODUTO DA VITRINE
+# EXTRAIR LINKS DA VITRINE
+#
+# Mantida para fallback.
+# O fluxo principal agora usa Playwright.
 # ============================================================
 
 def _extrair_links_de_produto(
@@ -225,8 +205,7 @@ def _extrair_links_de_produto(
         )
 
         # ----------------------------------------------------
-        # PRIORIDADE:
-        # Links que já possuem MLB
+        # LINK COM MLB
         # ----------------------------------------------------
 
         item_id = (
@@ -247,8 +226,7 @@ def _extrair_links_de_produto(
             continue
 
         # ----------------------------------------------------
-        # PRIORIDADE:
-        # href com sinais de produto
+        # TEXTO RELACIONADO A PRODUTO
         # ----------------------------------------------------
 
         texto_lower = texto.lower()
@@ -277,6 +255,10 @@ def _extrair_links_de_produto(
 
             continue
 
+        # ----------------------------------------------------
+        # URL RELACIONADA A PRODUTO
+        # ----------------------------------------------------
+
         if any(
             palavra in href_lower
             for palavra in (
@@ -296,7 +278,7 @@ def _extrair_links_de_produto(
             )
 
     # ========================================================
-    # 2. ELEMENTOS COM DATA-HREF
+    # 2. DATA-HREF / DATA-URL
     # ========================================================
 
     for tag in soup.find_all():
@@ -351,6 +333,8 @@ def _extrair_links_de_produto(
 
 # ============================================================
 # ENCONTRAR PRODUTO NA VITRINE
+#
+# Fallback usando HTML.
 # ============================================================
 
 def _encontrar_produto_na_vitrine(
@@ -371,11 +355,6 @@ def _encontrar_produto_na_vitrine(
     )
 
     if not candidatos:
-
-        # ----------------------------------------------------
-        # Último recurso:
-        # procura MLB no HTML
-        # ----------------------------------------------------
 
         match = re.search(
             r"MLB[-_]?\d{8,10}",
@@ -411,7 +390,7 @@ def _encontrar_produto_na_vitrine(
         )
 
     # ========================================================
-    # PRIORIZAR "IR PARA O PRODUTO"
+    # PRIORIDADE: IR PARA O PRODUTO
     # ========================================================
 
     for href, texto in candidatos:
@@ -431,25 +410,13 @@ def _encontrar_produto_na_vitrine(
                 )
             )
 
-            logger.info(
-                "Botão 'Ir para o produto' encontrado: %s",
-                href,
-            )
-
-            if item_id:
-
-                logger.info(
-                    "Produto identificado no botão: %s",
-                    item_id,
-                )
-
             return (
                 href,
                 item_id,
             )
 
     # ========================================================
-    # DEPOIS, QUALQUER LINK COM MLB
+    # QUALQUER LINK COM MLB
     # ========================================================
 
     for href, texto in candidatos:
@@ -462,18 +429,13 @@ def _encontrar_produto_na_vitrine(
 
         if item_id:
 
-            logger.info(
-                "Link de produto encontrado na vitrine: %s",
-                href,
-            )
-
             return (
                 href,
                 item_id,
             )
 
     # ========================================================
-    # POR ÚLTIMO, PRIMEIRO CANDIDATO
+    # PRIMEIRO CANDIDATO
     # ========================================================
 
     href, texto = candidatos[0]
@@ -484,11 +446,6 @@ def _encontrar_produto_na_vitrine(
         )
     )
 
-    logger.info(
-        "Link candidato encontrado na vitrine: %s",
-        href,
-    )
-
     return (
         href,
         item_id,
@@ -496,199 +453,620 @@ def _encontrar_produto_na_vitrine(
 
 
 # ============================================================
-# RESOLVER LINK DA VITRINE
+# ENCONTRAR BOTÃO "IR PARA O PRODUTO"
 # ============================================================
 
-def resolver_link_da_vitrine(
-    link: str,
-) -> Tuple[str, str, Optional[str]]:
+def _encontrar_botao_ir_para_produto(
+    page,
+):
+    """
+    Procura o botão/link "Ir para o produto"
+    no DOM renderizado pelo navegador.
 
-    link = (
-        str(link or "")
-        .strip()
+    Tenta várias estratégias porque a estrutura
+    HTML da vitrine pode variar.
+    """
+
+    padrao = re.compile(
+        r"ir\s+para\s+o\s+produto",
+        re.IGNORECASE,
     )
 
-    if not link:
+    candidatos = []
 
-        raise MercadoLivreAPIError(
-            "Link de entrada está vazio."
+    # ========================================================
+    # 1. LINK PELO ROLE
+    # ========================================================
+
+    candidatos.append(
+        page.get_by_role(
+            "link",
+            name=padrao,
         )
+    )
+
+    # ========================================================
+    # 2. BOTÃO PELO ROLE
+    # ========================================================
+
+    candidatos.append(
+        page.get_by_role(
+            "button",
+            name=padrao,
+        )
+    )
+
+    # ========================================================
+    # 3. TEXTO
+    # ========================================================
+
+    candidatos.append(
+        page.get_by_text(
+            padrao
+        )
+    )
+
+    # ========================================================
+    # TESTAR CANDIDATOS
+    # ========================================================
+
+    for candidato in candidatos:
+
+        try:
+
+            quantidade = (
+                candidato.count()
+            )
+
+        except Exception:
+
+            continue
+
+        if quantidade <= 0:
+            continue
+
+        for indice in range(
+            min(quantidade, 10)
+        ):
+
+            try:
+
+                elemento = (
+                    candidato.nth(indice)
+                )
+
+                if elemento.is_visible(
+                    timeout=2000
+                ):
+
+                    return elemento
+
+            except Exception:
+
+                continue
+
+    return None
+
+
+# ============================================================
+# ABRIR VITRINE E CLICAR NO PRODUTO
+# ============================================================
+
+def _abrir_vitrine_e_clicar_produto(
+    link: str,
+) -> Tuple[str, str, str]:
 
     logger.info(
-        "Abrindo link recebido pelo bot: %s",
+        "Abrindo vitrine com Playwright: %s",
         link,
     )
 
-    session = _obter_sessao_web()
+    with sync_playwright() as p:
 
-    try:
+        browser = None
+        context = None
 
-        response = session.get(
-            link,
-            allow_redirects=True,
-            timeout=HTTP_TIMEOUT,
-        )
+        try:
 
-    except requests.RequestException as erro:
+            # ====================================================
+            # INICIAR CHROMIUM
+            # ====================================================
 
-        raise MercadoLivreAPIError(
-            "Erro ao abrir o link recebido: "
-            f"{erro}"
-        ) from erro
+            browser = p.chromium.launch(
+                headless=True,
+            )
 
-    url_final = (
-        response.url
-        or link
-    )
+            context = browser.new_context(
+                user_agent=DEFAULT_USER_AGENT,
+                locale="pt-BR",
+                viewport={
+                    "width": 1366,
+                    "height": 768,
+                },
+            )
 
-    logger.info(
-        "URL final da vitrine: %s",
-        url_final,
-    )
+            page = context.new_page()
 
-    if _eh_account_verification(
-        url_final
-    ):
+            page.set_default_timeout(
+                15000
+            )
 
-        raise MercadoLivreAPIError(
-            "O link recebido foi bloqueado "
-            "pelo Mercado Livre com "
-            "account-verification."
-        )
+            # ====================================================
+            # ABRIR VITRINE
+            # ====================================================
 
-    if response.status_code >= 400:
+            logger.info(
+                "Navegando para a vitrine..."
+            )
 
-        raise MercadoLivreAPIError(
-            "Erro ao abrir a vitrine: "
-            f"HTTP {response.status_code}"
-        )
+            page.goto(
+                link,
+                wait_until="domcontentloaded",
+                timeout=PLAYWRIGHT_TIMEOUT,
+            )
 
-    html = (
-        response.text
-        or ""
-    )
+            # ====================================================
+            # ESPERAR CARREGAMENTO
+            # ====================================================
 
-    # ========================================================
-    # CASO O LINK JÁ SEJA UM PRODUTO
-    # ========================================================
+            try:
 
-    item_id = (
-        extrair_item_id_da_string(
-            url_final
-        )
-    )
+                page.wait_for_load_state(
+                    "networkidle",
+                    timeout=10000,
+                )
 
-    if item_id:
+            except PlaywrightTimeoutError:
 
-        logger.info(
-            "Link recebido já aponta "
-            "para produto: %s",
-            item_id,
-        )
+                logger.warning(
+                    "A vitrine não atingiu "
+                    "networkidle. Continuando."
+                )
 
-        return (
-            url_final,
-            url_final,
-            item_id,
-        )
+            url_vitrine = page.url
 
-    # ========================================================
-    # VITRINE
-    # ========================================================
+            logger.info(
+                "Vitrine carregada: %s",
+                url_vitrine,
+            )
 
-    logger.info(
-        "Procurando botão/link "
-        "do produto dentro da vitrine..."
-    )
+            # ====================================================
+            # ACCOUNT VERIFICATION
+            # ====================================================
 
-    link_produto, item_id = (
-        _encontrar_produto_na_vitrine(
-            html,
-            url_final,
-        )
-    )
+            if _eh_account_verification(
+                url_vitrine
+            ):
 
-    if not link_produto:
+                raise MercadoLivreAPIError(
+                    "O Mercado Livre redirecionou "
+                    "a vitrine para account-verification."
+                )
 
-        raise MercadoLivreAPIError(
-            "O produto foi encontrado no HTML, "
-            "mas o link para abrir o produto "
-            "não foi encontrado."
-        )
+            # ====================================================
+            # CASO O LINK JÁ SEJA UM PRODUTO
+            # ====================================================
 
-    logger.info(
-        "Link real do produto encontrado: %s",
-        link_produto,
-    )
+            item_id_direto = (
+                extrair_item_id_da_string(
+                    url_vitrine
+                )
+            )
 
-    return (
-        url_final,
-        link_produto,
-        item_id,
-    )
+            if item_id_direto:
 
+                logger.info(
+                    "O link recebido já é "
+                    "um produto: %s",
+                    item_id_direto,
+                )
 
-# ============================================================
-# ABRIR PÁGINA REAL DO PRODUTO
-# ============================================================
+                try:
 
-def _abrir_pagina_produto(
-    session: requests.Session,
-    link_produto: str,
-) -> Tuple[str, str]:
+                    page.locator(
+                        "h1.ui-pdp-title"
+                    ).wait_for(
+                        state="visible",
+                        timeout=15000,
+                    )
 
-    logger.info(
-        "Abrindo o link real do produto: %s",
-        link_produto,
-    )
+                except PlaywrightTimeoutError:
 
-    try:
+                    logger.warning(
+                        "Título do produto não apareceu."
+                    )
 
-        response = session.get(
-            link_produto,
-            allow_redirects=True,
-            timeout=HTTP_TIMEOUT,
-        )
+                return (
+                    url_vitrine,
+                    url_vitrine,
+                    page.content(),
+                )
 
-    except requests.RequestException as erro:
+            # ====================================================
+            # PROCURAR BOTÃO
+            # ====================================================
 
-        raise MercadoLivreAPIError(
-            "Erro ao abrir o link do produto: "
-            f"{erro}"
-        ) from erro
+            logger.info(
+                "Procurando 'Ir para o produto'..."
+            )
 
-    url_final = (
-        response.url
-        or link_produto
-    )
+            botao = (
+                _encontrar_botao_ir_para_produto(
+                    page
+                )
+            )
 
-    logger.info(
-        "Página do produto retornou HTTP %d | URL final: %s",
-        response.status_code,
-        url_final,
-    )
+            # ====================================================
+            # FALLBACK:
+            # PROCURAR LINKS COM MLB
+            # ====================================================
 
-    if _eh_account_verification(
-        url_final
-    ):
+            if botao is None:
 
-        raise MercadoLivreAPIError(
-            "O Mercado Livre redirecionou "
-            "a página do produto para "
-            "account-verification."
-        )
+                logger.warning(
+                    "Botão 'Ir para o produto' "
+                    "não encontrado pelo texto."
+                )
 
-    if response.status_code >= 400:
+                links = page.locator(
+                    "a[href]"
+                )
 
-        raise MercadoLivreAPIError(
-            "Erro ao abrir página do produto: "
-            f"HTTP {response.status_code}"
-        )
+                quantidade = (
+                    links.count()
+                )
 
-    return (
-        url_final,
-        response.text or "",
-    )
+                for indice in range(
+                    min(quantidade, 500)
+                ):
+
+                    try:
+
+                        elemento = (
+                            links.nth(indice)
+                        )
+
+                        href = (
+                            elemento.get_attribute(
+                                "href"
+                            )
+                            or ""
+                        )
+
+                        href = _normalizar_link(
+                            href,
+                            page.url,
+                        )
+
+                        if (
+                            href
+                            and _eh_link_mercadolivre(
+                                href
+                            )
+                            and extrair_item_id_da_string(
+                                href
+                            )
+                        ):
+
+                            logger.info(
+                                "Link MLB encontrado "
+                                "como fallback: %s",
+                                href,
+                            )
+
+                            # =================================================
+                            # CLICAR NO LINK REAL
+                            # =================================================
+
+                            botao = elemento
+
+                            break
+
+                    except Exception:
+
+                        continue
+
+            if botao is None:
+
+                # ====================================================
+                # ÚLTIMO FALLBACK:
+                # ANALISAR HTML RENDERIZADO
+                # ====================================================
+
+                html_vitrine = (
+                    page.content()
+                )
+
+                link_produto, item_id = (
+                    _encontrar_produto_na_vitrine(
+                        html_vitrine,
+                        page.url,
+                    )
+                )
+
+                if link_produto:
+
+                    logger.warning(
+                        "Usando link encontrado "
+                        "no HTML renderizado: %s",
+                        link_produto,
+                    )
+
+                    # Abre o link dentro do mesmo
+                    # contexto do navegador.
+                    page.goto(
+                        link_produto,
+                        wait_until="domcontentloaded",
+                        timeout=PLAYWRIGHT_TIMEOUT,
+                    )
+
+                    try:
+
+                        page.wait_for_load_state(
+                            "networkidle",
+                            timeout=10000,
+                        )
+
+                    except PlaywrightTimeoutError:
+                        pass
+
+                    if _eh_account_verification(
+                        page.url
+                    ):
+
+                        raise MercadoLivreAPIError(
+                            "O produto foi redirecionado "
+                            "para account-verification."
+                        )
+
+                    return (
+                        url_vitrine,
+                        page.url,
+                        page.content(),
+                    )
+
+                raise MercadoLivreAPIError(
+                    "Não foi encontrado o botão "
+                    "'Ir para o produto' "
+                    "nem um link de produto."
+                )
+
+            # ====================================================
+            # GUARDAR URL ANTES DO CLIQUE
+            # ====================================================
+
+            url_antes = page.url
+
+            logger.info(
+                "Clicando em 'Ir para o produto'..."
+            )
+
+            # ====================================================
+            # TENTAR DETECTAR NOVA ABA
+            # ====================================================
+
+            try:
+
+                with context.expect_page(
+                    timeout=3000
+                ) as nova_pagina_info:
+
+                    botao.click(
+                        timeout=10000
+                    )
+
+                nova_pagina = (
+                    nova_pagina_info.value
+                )
+
+                logger.info(
+                    "O produto abriu em uma nova aba."
+                )
+
+                try:
+
+                    nova_pagina.wait_for_load_state(
+                        "domcontentloaded",
+                        timeout=PLAYWRIGHT_TIMEOUT,
+                    )
+
+                except PlaywrightTimeoutError:
+
+                    pass
+
+                try:
+
+                    nova_pagina.wait_for_load_state(
+                        "networkidle",
+                        timeout=10000,
+                    )
+
+                except PlaywrightTimeoutError:
+
+                    pass
+
+                page = nova_pagina
+
+            except PlaywrightTimeoutError:
+
+                # ====================================================
+                # CLIQUE NA MESMA ABA
+                # ====================================================
+
+                logger.info(
+                    "Nenhuma nova aba detectada. "
+                    "Aguardando navegação na mesma aba."
+                )
+
+                try:
+
+                    page.wait_for_url(
+                        lambda url: url != url_antes,
+                        timeout=15000,
+                    )
+
+                except PlaywrightTimeoutError:
+
+                    logger.warning(
+                        "A URL não mudou imediatamente "
+                        "após o clique."
+                    )
+
+                try:
+
+                    page.wait_for_load_state(
+                        "domcontentloaded",
+                        timeout=15000,
+                    )
+
+                except PlaywrightTimeoutError:
+
+                    pass
+
+                try:
+
+                    page.wait_for_load_state(
+                        "networkidle",
+                        timeout=10000,
+                    )
+
+                except PlaywrightTimeoutError:
+
+                    pass
+
+            except Exception as erro:
+
+                logger.warning(
+                    "Erro ao detectar nova aba: %s",
+                    erro,
+                )
+
+                # Tenta garantir que o clique ocorreu.
+                try:
+
+                    botao.click(
+                        timeout=10000
+                    )
+
+                except Exception:
+
+                    pass
+
+            # ====================================================
+            # URL FINAL
+            # ====================================================
+
+            url_produto = page.url
+
+            logger.info(
+                "URL final após clique: %s",
+                url_produto,
+            )
+
+            # ====================================================
+            # ACCOUNT VERIFICATION
+            # ====================================================
+
+            if _eh_account_verification(
+                url_produto
+            ):
+
+                raise MercadoLivreAPIError(
+                    "O clique em 'Ir para o produto' "
+                    "levou para account-verification."
+                )
+
+            # ====================================================
+            # AGUARDAR TÍTULO
+            # ====================================================
+
+            try:
+
+                page.locator(
+                    "h1.ui-pdp-title"
+                ).wait_for(
+                    state="visible",
+                    timeout=15000,
+                )
+
+                logger.info(
+                    "Título do produto encontrado."
+                )
+
+            except PlaywrightTimeoutError:
+
+                logger.warning(
+                    "h1.ui-pdp-title não apareceu."
+                )
+
+            # ====================================================
+            # MAIS UMA ESPERA PARA CONTEÚDO DINÂMICO
+            # ====================================================
+
+            try:
+
+                page.wait_for_timeout(
+                    1000
+                )
+
+            except Exception:
+
+                pass
+
+            # ====================================================
+            # HTML FINAL RENDERIZADO
+            # ====================================================
+
+            html_produto = (
+                page.content()
+            )
+
+            if not html_produto:
+
+                raise MercadoLivreAPIError(
+                    "A página do produto "
+                    "não retornou HTML."
+                )
+
+            return (
+                url_vitrine,
+                url_produto,
+                html_produto,
+            )
+
+        except MercadoLivreAPIError:
+
+            raise
+
+        except PlaywrightTimeoutError as erro:
+
+            raise MercadoLivreAPIError(
+                "Timeout durante a navegação "
+                "com Playwright."
+            ) from erro
+
+        except Exception as erro:
+
+            raise MercadoLivreAPIError(
+                "Erro durante a navegação "
+                f"com Playwright: {erro}"
+            ) from erro
+
+        finally:
+
+            if context is not None:
+
+                try:
+                    context.close()
+                except Exception:
+                    pass
+
+            if browser is not None:
+
+                try:
+                    browser.close()
+                except Exception:
+                    pass
 
 
 # ============================================================
@@ -787,7 +1165,77 @@ def _extrair_json_ld(
 
 
 # ============================================================
-# EXTRAIR DADOS DA PÁGINA
+# CONVERTER PREÇO
+# ============================================================
+
+def _converter_preco(
+    valor: Any,
+) -> Optional[float]:
+
+    if valor is None:
+        return None
+
+    if isinstance(
+        valor,
+        (int, float),
+    ):
+
+        return float(valor)
+
+    valor = (
+        str(valor)
+        .strip()
+    )
+
+    if not valor:
+        return None
+
+    # Remove símbolos de moeda
+    valor = re.sub(
+        r"[^\d,.\-]",
+        "",
+        valor,
+    )
+
+    if not valor:
+        return None
+
+    # Caso brasileiro:
+    # 1.299,90 -> 1299.90
+    if (
+        "," in valor
+        and "." in valor
+    ):
+
+        valor = (
+            valor
+            .replace(".", "")
+            .replace(",", ".")
+        )
+
+    elif "," in valor:
+
+        valor = valor.replace(
+            ",",
+            ".",
+        )
+
+    try:
+
+        return float(
+            valor
+        )
+
+    except (
+        ValueError,
+        TypeError,
+    ):
+
+        return None
+
+
+# ============================================================
+# EXTRAIR DADOS DO PRODUTO
 # ============================================================
 
 def _extrair_dados_produto(
@@ -823,12 +1271,14 @@ def _extrair_dados_produto(
             strip=True,
         )
 
+    # Fallback JSON-LD
     if not titulo:
 
         titulo = json_ld.get(
             "name"
         )
 
+    # Fallback OG
     if not titulo:
 
         meta = soup.find(
@@ -842,12 +1292,29 @@ def _extrair_dados_produto(
                 "content"
             )
 
+    # Fallback <title>
+    if not titulo:
+
+        elemento_title = soup.find(
+            "title"
+        )
+
+        if elemento_title:
+
+            titulo = (
+                elemento_title.get_text(
+                    " ",
+                    strip=True,
+                )
+            )
+
     # ========================================================
     # IMAGEM
     # ========================================================
 
     image_url = None
 
+    # OG image
     meta = soup.find(
         "meta",
         property="og:image",
@@ -859,6 +1326,7 @@ def _extrair_dados_produto(
             "content"
         )
 
+    # JSON-LD
     if not image_url:
 
         imagem = json_ld.get(
@@ -871,7 +1339,10 @@ def _extrair_dados_produto(
         ):
 
             if imagem:
-                image_url = imagem[0]
+
+                image_url = (
+                    imagem[0]
+                )
 
         elif isinstance(
             imagem,
@@ -880,6 +1351,7 @@ def _extrair_dados_produto(
 
             image_url = imagem
 
+    # Fallback img
     if not image_url:
 
         img = soup.find(
@@ -901,6 +1373,10 @@ def _extrair_dados_produto(
 
     price = None
 
+    # --------------------------------------------------------
+    # meta itemprop price
+    # --------------------------------------------------------
+
     meta = soup.find(
         "meta",
         itemprop="price",
@@ -908,22 +1384,13 @@ def _extrair_dados_produto(
 
     if meta:
 
-        valor = meta.get(
-            "content"
+        price = _converter_preco(
+            meta.get("content")
         )
 
-        try:
-
-            if valor:
-                price = float(
-                    valor
-                )
-
-        except (
-            ValueError,
-            TypeError,
-        ):
-            pass
+    # --------------------------------------------------------
+    # JSON-LD
+    # --------------------------------------------------------
 
     if price is None:
 
@@ -947,29 +1414,106 @@ def _extrair_dados_produto(
             dict,
         ):
 
-            valor = offers.get(
-                "price"
+            price = _converter_preco(
+                offers.get("price")
             )
+
+    # --------------------------------------------------------
+    # PREÇO VISÍVEL NA PÁGINA
+    # --------------------------------------------------------
+
+    if price is None:
+
+        seletores_preco = (
+            ".andes-money-amount__fraction",
+            ".ui-pdp-price__second-line .andes-money-amount__fraction",
+            ".ui-pdp-price__part .andes-money-amount__fraction",
+        )
+
+        for seletor in seletores_preco:
 
             try:
 
-                if valor is not None:
+                elementos = soup.select(
+                    seletor
+                )
 
-                    price = float(
-                        valor
+            except Exception:
+
+                continue
+
+            if not elementos:
+                continue
+
+            partes = []
+
+            for elemento in elementos:
+
+                texto = elemento.get_text(
+                    " ",
+                    strip=True,
+                )
+
+                if texto:
+                    partes.append(
+                        texto
                     )
 
-            except (
-                ValueError,
-                TypeError,
-            ):
-                pass
+            if partes:
+
+                # Normalmente a parte inteira está no primeiro
+                # elemento. Se houver separador decimal,
+                # tentamos localizar também os centavos.
+
+                inteiro = partes[0]
+
+                centavos = None
+
+                # Procura centavos em elementos próximos.
+                pai = elementos[0].parent
+
+                if pai:
+
+                    texto_pai = pai.get_text(
+                        " ",
+                        strip=True,
+                    )
+
+                    match_centavos = re.search(
+                        r"[,.](\d{2})(?!\d)",
+                        texto_pai,
+                    )
+
+                    if match_centavos:
+
+                        centavos = (
+                            match_centavos.group(1)
+                        )
+
+                if centavos:
+
+                    price = _converter_preco(
+                        f"{inteiro},{centavos}"
+                    )
+
+                else:
+
+                    price = _converter_preco(
+                        inteiro
+                    )
+
+                if price is not None:
+                    break
 
     # ========================================================
     # MOEDA
     # ========================================================
 
     currency = "BRL"
+
+    # --------------------------------------------------------
+    # JSON-LD
+    # --------------------------------------------------------
 
     offers = json_ld.get(
         "offers"
@@ -995,8 +1539,39 @@ def _extrair_dados_produto(
             offers.get(
                 "priceCurrency"
             )
-            or "BRL"
+            or currency
         )
+
+    # --------------------------------------------------------
+    # META
+    # --------------------------------------------------------
+
+    if not currency:
+
+        meta_currency = soup.find(
+            "meta",
+            itemprop="priceCurrency",
+        )
+
+        if meta_currency:
+
+            currency = (
+                meta_currency.get(
+                    "content"
+                )
+                or "BRL"
+            )
+
+    # ========================================================
+    # ITEM ID
+    # ========================================================
+
+    item_id_final = (
+        item_id
+        or extrair_item_id_da_string(
+            url_produto
+        )
+    )
 
     # ========================================================
     # VALIDAÇÃO
@@ -1015,13 +1590,35 @@ def _extrair_dados_produto(
             "dados reconhecíveis do produto."
         )
 
-    return {
-        "itemId": (
-            item_id
-            or extrair_item_id_da_string(
-                url_produto
-            )
-        ),
+    # ========================================================
+    # NORMALIZAÇÃO DO TÍTULO
+    # ========================================================
+
+    if titulo:
+
+        titulo = re.sub(
+            r"\s+",
+            " ",
+            str(titulo),
+        ).strip()
+
+    # ========================================================
+    # NORMALIZAÇÃO DA IMAGEM
+    # ========================================================
+
+    if image_url:
+
+        image_url = _normalizar_link(
+            image_url,
+            url_produto,
+        )
+
+    # ========================================================
+    # RESULTADO
+    # ========================================================
+
+    produto = {
+        "itemId": item_id_final,
 
         "productName": (
             titulo
@@ -1043,7 +1640,10 @@ def _extrair_dados_produto(
 
         "priceDiscountRate": None,
 
-        "currencyId": currency,
+        "currencyId": (
+            currency
+            or "BRL"
+        ),
 
         "sales": None,
 
@@ -1076,11 +1676,27 @@ def _extrair_dados_produto(
         "siteId": "MLB",
 
         "mercadolivreData": {
-            "source": "vitrine_web",
-            "item_id": item_id,
+            "source": "vitrine_web_playwright",
+
+            "item_id": item_id_final,
+
             "url": url_produto,
+
+            "title_found": bool(
+                titulo
+            ),
+
+            "price_found": (
+                price is not None
+            ),
+
+            "image_found": bool(
+                image_url
+            ),
         },
     }
+
+    return produto
 
 
 # ============================================================
@@ -1102,58 +1718,61 @@ def buscar_produto_por_link(
         .strip()
     )
 
-    session = _obter_sessao_web()
-
     # ========================================================
-    # 1. ABRE O LINK RECEBIDO PELO BOT
+    # 1. ABRIR VITRINE
+    #
+    # 2. ENCONTRAR "IR PARA O PRODUTO"
+    #
+    # 3. CLICAR USANDO PLAYWRIGHT
+    #
+    # 4. AGUARDAR A PÁGINA
     # ========================================================
 
     (
         url_vitrine,
         link_produto,
-        item_id,
-    ) = resolver_link_da_vitrine(
+        html_produto,
+    ) = _abrir_vitrine_e_clicar_produto(
         link
     )
 
+    # ========================================================
+    # ITEM ID
+    # ========================================================
+
+    item_id = (
+        extrair_item_id_da_string(
+            link_produto
+        )
+    )
+
     logger.info(
-        "Vitrine encontrada: %s",
+        "Vitrine: %s",
         url_vitrine,
     )
 
     logger.info(
-        "Link real do produto: %s",
+        "Produto: %s",
         link_produto,
     )
 
     logger.info(
-        "Item ID identificado: %s",
+        "Item ID: %s",
         item_id,
     )
 
     # ========================================================
-    # 2. ABRE O LINK DO BOTÃO
-    # ========================================================
-
-    url_produto_final, html_produto = (
-        _abrir_pagina_produto(
-            session,
-            link_produto,
-        )
-    )
-
-    # ========================================================
-    # 3. EXTRAI OS DADOS
+    # EXTRAIR DADOS
     # ========================================================
 
     produto = _extrair_dados_produto(
         html=html_produto,
-        url_produto=url_produto_final,
+        url_produto=link_produto,
         item_id=item_id,
     )
 
     # ========================================================
-    # 4. PRESERVA LINKS
+    # PRESERVAR LINKS
     # ========================================================
 
     produto.update(
@@ -1168,9 +1787,7 @@ def buscar_produto_por_link(
 
             "productButtonLink": link_produto,
 
-            "resolvedProductLink": (
-                url_produto_final
-            ),
+            "resolvedProductLink": link_produto,
         }
     )
 
