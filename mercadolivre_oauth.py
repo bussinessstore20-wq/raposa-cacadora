@@ -553,12 +553,6 @@ def _obter_registro_token(
 def _renovar_access_token(
     registro: Dict[str, Any],
 ) -> str:
-    """
-    Renova o access token.
-
-    O Mercado Livre pode fornecer um novo refresh_token.
-    Por isso o registro inteiro da resposta é salvo novamente.
-    """
 
     refresh_token = str(
         registro.get("refresh_token")
@@ -588,11 +582,6 @@ def _renovar_access_token(
         or ""
     ).strip()
 
-    novo_refresh_token = str(
-        resposta.get("refresh_token")
-        or ""
-    ).strip()
-
     if not novo_access_token:
 
         raise RuntimeError(
@@ -600,11 +589,20 @@ def _renovar_access_token(
             "access_token."
         )
 
+    novo_refresh_token = str(
+        resposta.get("refresh_token")
+        or ""
+    ).strip()
+
+    # Alguns fluxos podem não devolver
+    # outro refresh_token.
+    #
+    # Nesse caso preservamos o atual.
+
     if not novo_refresh_token:
 
-        raise RuntimeError(
-            "Refresh do Mercado Livre não retornou "
-            "novo refresh_token."
+        resposta["refresh_token"] = (
+            refresh_token
         )
 
     _salvar_tokens(
@@ -617,7 +615,6 @@ def _renovar_access_token(
     )
 
     return novo_access_token
-
 
 # ============================================================
 # OBTER ACCESS TOKEN ATUAL
