@@ -40,35 +40,31 @@ def _obter_sessao_web() -> requests.Session:
 
     session = requests.Session()
 
-    session.headers.update({
-        "User-Agent": DEFAULT_USER_AGENT,
-
-        "Accept": (
-            "text/html,application/xhtml+xml,"
-            "application/xml;q=0.9,image/avif,image/webp,"
-            "*/*;q=0.8"
-        ),
-
-        "Accept-Language": (
-            "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
-        ),
-
-        "Accept-Encoding": (
-            "gzip, deflate"
-        ),
-
-        "Cache-Control": "no-cache",
-
-        "Pragma": "no-cache",
-
-        "Upgrade-Insecure-Requests": "1",
-    })
+    session.headers.update(
+        {
+            "User-Agent": DEFAULT_USER_AGENT,
+            "Accept": (
+                "text/html,application/xhtml+xml,"
+                "application/xml;q=0.9,"
+                "image/avif,image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": (
+                "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
+            ),
+            "Accept-Encoding": (
+                "gzip, deflate"
+            ),
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Upgrade-Insecure-Requests": "1",
+        }
+    )
 
     return session
 
 
 # ============================================================
-# EXTRAIR MLB
+# ITEM ID
 # ============================================================
 
 def extrair_item_id_da_string(
@@ -79,13 +75,12 @@ def extrair_item_id_da_string(
         return None
 
     match = re.search(
-        r"MLB[-_]?(\d{8,12})",
-        str(conteudo),
+        r"MLB[-_]?(\d{8,10})",
+        conteudo,
         re.IGNORECASE,
     )
 
     if match:
-
         return (
             f"MLB{match.group(1)}"
             .upper()
@@ -95,24 +90,21 @@ def extrair_item_id_da_string(
 
 
 # ============================================================
-# NORMALIZAR URL
+# NORMALIZAR LINK
 # ============================================================
 
-def _normalizar_url(
-    base_url: str,
+def _normalizar_link(
     href: str,
-) -> Optional[str]:
-
-    if not href:
-        return None
+    base_url: str,
+) -> str:
 
     href = (
-        str(href)
+        str(href or "")
         .strip()
     )
 
     if not href:
-        return None
+        return ""
 
     if href.startswith(
         (
@@ -122,7 +114,7 @@ def _normalizar_url(
             "#",
         )
     ):
-        return None
+        return ""
 
     return urljoin(
         base_url,
@@ -131,15 +123,12 @@ def _normalizar_url(
 
 
 # ============================================================
-# VERIFICAR SE É LINK DO MERCADO LIVRE
+# VERIFICAR SE É MERCADO LIVRE
 # ============================================================
 
 def _eh_link_mercadolivre(
     url: str,
 ) -> bool:
-
-    if not url:
-        return False
 
     try:
 
@@ -150,115 +139,165 @@ def _eh_link_mercadolivre(
         )
 
     except Exception:
-
         return False
 
     return (
         "mercadolivre.com.br" in host
         or "mercadolibre.com" in host
+        or "meli.la" in host
     )
 
 
 # ============================================================
-# VERIFICAR SE PARECE LINK DE PRODUTO
+# DETECTAR ACCOUNT VERIFICATION
 # ============================================================
 
-def _parece_link_de_produto(
+def _eh_account_verification(
     url: str,
 ) -> bool:
 
-    if not url:
-        return False
-
     url_lower = (
-        url
+        str(url or "")
         .lower()
     )
 
-    # --------------------------------------------------------
-    # MLB explícito
-    # --------------------------------------------------------
-
-    if extrair_item_id_da_string(
-        url
-    ):
-
-        return True
-
-    # --------------------------------------------------------
-    # Caminhos comuns de produto
-    # --------------------------------------------------------
-
-    padroes = (
-        "/produto",
-        "/p/",
-        "/mlb-",
-        "/mlb_",
-        "/oferta/",
-        "/item/",
+    return (
+        "/gz/account-verification"
+        in url_lower
     )
 
-    if any(
-        padrao in url_lower
-        for padrao in padroes
-    ):
-
-        return True
-
-    return False
-
 
 # ============================================================
-# EXTRAIR LINKS DOS ELEMENTOS HTML
+# EXTRAIR LINK DO PRODUTO DA VITRINE
 # ============================================================
 
-def _extrair_links_html(
+def _extrair_links_de_produto(
     soup: BeautifulSoup,
-    base_url: str,
-) -> List[str]:
+    url_vitrine: str,
+) -> List[Tuple[str, str]]:
 
     encontrados = []
 
     vistos = set()
 
-    # --------------------------------------------------------
-    # <a href="">
-    # --------------------------------------------------------
+    # ========================================================
+    # 1. LINKS <a>
+    # ========================================================
 
     for tag in soup.find_all(
         "a",
         href=True,
     ):
 
-        href = tag.get(
-            "href"
-        )
+        href_original = str(
+            tag.get("href") or ""
+        ).strip()
 
-        url = _normalizar_url(
-            base_url,
-            href,
-        )
-
-        if not url:
+        if not href_original:
             continue
 
-        if url in vistos:
-            continue
+        href = _normalizar_link(
+            href_original,
+            url_vitrine,
+        )
 
-        vistos.add(url)
+        if not href:
+            continue
 
         if not _eh_link_mercadolivre(
-            url
+            href
         ):
             continue
 
-        encontrados.append(
-            url
+        chave = href.split("#")[0]
+
+        if chave in vistos:
+            continue
+
+        vistos.add(chave)
+
+        texto = (
+            tag.get_text(
+                " ",
+                strip=True,
+            )
+            or ""
         )
 
-    # --------------------------------------------------------
-    # atributos data-href / data-url
-    # --------------------------------------------------------
+        # ----------------------------------------------------
+        # PRIORIDADE:
+        # Links que já possuem MLB
+        # ----------------------------------------------------
+
+        item_id = (
+            extrair_item_id_da_string(
+                href
+            )
+        )
+
+        if item_id:
+
+            encontrados.append(
+                (
+                    href,
+                    texto,
+                )
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # PRIORIDADE:
+        # href com sinais de produto
+        # ----------------------------------------------------
+
+        texto_lower = texto.lower()
+        href_lower = href.lower()
+
+        palavras_produto = (
+            "ir para o produto",
+            "ver produto",
+            "comprar",
+            "produto",
+            "ver oferta",
+            "oferta",
+        )
+
+        if any(
+            palavra in texto_lower
+            for palavra in palavras_produto
+        ):
+
+            encontrados.append(
+                (
+                    href,
+                    texto,
+                )
+            )
+
+            continue
+
+        if any(
+            palavra in href_lower
+            for palavra in (
+                "/p/",
+                "/produto/",
+                "/item/",
+                "redirect",
+                "product",
+            )
+        ):
+
+            encontrados.append(
+                (
+                    href,
+                    texto,
+                )
+            )
+
+    # ========================================================
+    # 2. ELEMENTOS COM DATA-HREF
+    # ========================================================
 
     for tag in soup.find_all():
 
@@ -276,312 +315,211 @@ def _extrair_links_html(
             if not valor:
                 continue
 
-            url = _normalizar_url(
-                base_url,
-                valor,
+            href = _normalizar_link(
+                str(valor),
+                url_vitrine,
             )
 
-            if not url:
+            if not href:
                 continue
-
-            if url in vistos:
-                continue
-
-            vistos.add(url)
 
             if not _eh_link_mercadolivre(
-                url
+                href
             ):
                 continue
 
+            chave = href.split("#")[0]
+
+            if chave in vistos:
+                continue
+
+            vistos.add(chave)
+
             encontrados.append(
-                url
+                (
+                    href,
+                    tag.get_text(
+                        " ",
+                        strip=True,
+                    )
+                    or "",
+                )
             )
 
     return encontrados
 
 
 # ============================================================
-# EXTRAIR URLS DE JSON EMBUTIDO
+# ENCONTRAR PRODUTO NA VITRINE
 # ============================================================
 
-def _extrair_urls_do_json(
-    soup: BeautifulSoup,
-    base_url: str,
-) -> List[str]:
+def _encontrar_produto_na_vitrine(
+    html: str,
+    url_vitrine: str,
+) -> Tuple[str, Optional[str]]:
 
-    urls = []
+    soup = BeautifulSoup(
+        html,
+        "html.parser",
+    )
 
-    vistos = set()
-
-    # --------------------------------------------------------
-    # Scripts
-    # --------------------------------------------------------
-
-    for script in soup.find_all(
-        "script"
-    ):
-
-        texto = (
-            script.string
-            or script.get_text()
-            or ""
+    candidatos = (
+        _extrair_links_de_produto(
+            soup,
+            url_vitrine,
         )
+    )
 
-        if not texto:
-            continue
+    if not candidatos:
 
         # ----------------------------------------------------
-        # URLs absolutas
+        # Último recurso:
+        # procura MLB no HTML
         # ----------------------------------------------------
 
-        encontrados = re.findall(
-            r'https?://[^"\']+',
-            texto,
+        match = re.search(
+            r"MLB[-_]?\d{8,10}",
+            html,
+            re.IGNORECASE,
         )
 
-        for url in encontrados:
+        if match:
 
-            url = (
-                url
-                .replace(
-                    "\\/",
-                    "/",
-                )
-                .replace(
-                    "\\u002F",
-                    "/",
+            item_id = (
+                extrair_item_id_da_string(
+                    match.group(0)
                 )
             )
 
-            # Limpeza básica
-            url = url.rstrip(
-                "\"',}"
-            )
+            if item_id:
 
-            if not _eh_link_mercadolivre(
-                url
-            ):
-                continue
-
-            if url in vistos:
-                continue
-
-            vistos.add(url)
-
-            urls.append(
-                url
-            )
-
-        # ----------------------------------------------------
-        # URLs relativas contendo MLB
-        # ----------------------------------------------------
-
-        if "MLB" in texto.upper():
-
-            matches = re.findall(
-                r'["\']([^"\']*MLB[-_]?\d{8,12}[^"\']*)["\']',
-                texto,
-                re.IGNORECASE,
-            )
-
-            for match in matches:
-
-                url = _normalizar_url(
-                    base_url,
-                    match,
+                logger.warning(
+                    "Encontrou MLB no HTML, "
+                    "mas não encontrou o href "
+                    "do botão do produto: %s",
+                    item_id,
                 )
 
-                if not url:
-                    continue
+                return (
+                    "",
+                    item_id,
+                )
 
-                if url in vistos:
-                    continue
-
-                vistos.add(url)
-
-                if _eh_link_mercadolivre(
-                    url
-                ):
-
-                    urls.append(
-                        url
-                    )
-
-    return urls
-
-
-# ============================================================
-# ESCOLHER LINK DO PRODUTO
-# ============================================================
-
-def _encontrar_link_produto(
-    soup: BeautifulSoup,
-    base_url: str,
-) -> Optional[str]:
-
-    logger.info(
-        "Procurando botão/link para o produto..."
-    )
-
-    links_html = _extrair_links_html(
-        soup,
-        base_url,
-    )
-
-    links_json = _extrair_urls_do_json(
-        soup,
-        base_url,
-    )
-
-    todos = []
-
-    vistos = set()
-
-    for url in (
-        links_html
-        + links_json
-    ):
-
-        if url in vistos:
-            continue
-
-        vistos.add(url)
-
-        todos.append(
-            url
+        raise MercadoLivreAPIError(
+            "A vitrine foi aberta, mas "
+            "nenhum link de produto foi encontrado."
         )
-
-    logger.info(
-        "Total de links candidatos encontrados: %d",
-        len(todos),
-    )
 
     # ========================================================
-    # PRIORIDADE 1
-    # Link que contém MLB
+    # PRIORIZAR "IR PARA O PRODUTO"
     # ========================================================
 
-    for url in todos:
+    for href, texto in candidatos:
 
-        if extrair_item_id_da_string(
-            url
+        texto_lower = (
+            texto or ""
+        ).lower()
+
+        if (
+            "ir para o produto"
+            in texto_lower
         ):
+
+            item_id = (
+                extrair_item_id_da_string(
+                    href
+                )
+            )
 
             logger.info(
-                "Link de produto encontrado pelo MLB: %s",
-                url,
+                "Botão 'Ir para o produto' encontrado: %s",
+                href,
             )
 
-            return url
-
-    # ========================================================
-    # PRIORIDADE 2
-    # URL com padrão de produto
-    # ========================================================
-
-    for url in todos:
-
-        if _parece_link_de_produto(
-            url
-        ):
-
-            logger.info(
-                "Link de produto encontrado: %s",
-                url,
-            )
-
-            return url
-
-    # ========================================================
-    # PRIORIDADE 3
-    # Texto do botão
-    # ========================================================
-
-    palavras_produto = (
-        "ir para o produto",
-        "ver produto",
-        "comprar",
-        "ver oferta",
-        "produto",
-    )
-
-    for tag in soup.find_all(
-        ["a", "button"]
-    ):
-
-        texto = (
-            tag.get_text(
-                " ",
-                strip=True,
-            )
-            .lower()
-        )
-
-        if not texto:
-            continue
-
-        if not any(
-            palavra in texto
-            for palavra in palavras_produto
-        ):
-            continue
-
-        for atributo in (
-            "href",
-            "data-href",
-            "data-url",
-            "data-link",
-        ):
-
-            valor = tag.get(
-                atributo
-            )
-
-            if not valor:
-                continue
-
-            url = _normalizar_url(
-                base_url,
-                valor,
-            )
-
-            if not url:
-                continue
-
-            if _eh_link_mercadolivre(
-                url
-            ):
+            if item_id:
 
                 logger.info(
-                    "Link encontrado através do botão '%s': %s",
-                    texto,
-                    url,
+                    "Produto identificado no botão: %s",
+                    item_id,
                 )
 
-                return url
+            return (
+                href,
+                item_id,
+            )
 
-    return None
+    # ========================================================
+    # DEPOIS, QUALQUER LINK COM MLB
+    # ========================================================
+
+    for href, texto in candidatos:
+
+        item_id = (
+            extrair_item_id_da_string(
+                href
+            )
+        )
+
+        if item_id:
+
+            logger.info(
+                "Link de produto encontrado na vitrine: %s",
+                href,
+            )
+
+            return (
+                href,
+                item_id,
+            )
+
+    # ========================================================
+    # POR ÚLTIMO, PRIMEIRO CANDIDATO
+    # ========================================================
+
+    href, texto = candidatos[0]
+
+    item_id = (
+        extrair_item_id_da_string(
+            href
+        )
+    )
+
+    logger.info(
+        "Link candidato encontrado na vitrine: %s",
+        href,
+    )
+
+    return (
+        href,
+        item_id,
+    )
 
 
 # ============================================================
-# ABRIR VITRINE
+# RESOLVER LINK DA VITRINE
 # ============================================================
 
-def _abrir_vitrine(
+def resolver_link_da_vitrine(
     link: str,
-) -> Tuple[
-    requests.Session,
-    str,
-    str,
-]:
+) -> Tuple[str, str, Optional[str]]:
 
-    session = _obter_sessao_web()
+    link = (
+        str(link or "")
+        .strip()
+    )
+
+    if not link:
+
+        raise MercadoLivreAPIError(
+            "Link de entrada está vazio."
+        )
 
     logger.info(
         "Abrindo link recebido pelo bot: %s",
         link,
     )
+
+    session = _obter_sessao_web()
 
     try:
 
@@ -594,14 +532,9 @@ def _abrir_vitrine(
     except requests.RequestException as erro:
 
         raise MercadoLivreAPIError(
-            "Erro ao abrir o link do Mercado Livre: "
+            "Erro ao abrir o link recebido: "
             f"{erro}"
         ) from erro
-
-    logger.info(
-        "HTTP ao abrir link: %d",
-        response.status_code,
-    )
 
     url_final = (
         response.url
@@ -609,15 +542,25 @@ def _abrir_vitrine(
     )
 
     logger.info(
-        "URL final: %s",
+        "URL final da vitrine: %s",
         url_final,
     )
+
+    if _eh_account_verification(
+        url_final
+    ):
+
+        raise MercadoLivreAPIError(
+            "O link recebido foi bloqueado "
+            "pelo Mercado Livre com "
+            "account-verification."
+        )
 
     if response.status_code >= 400:
 
         raise MercadoLivreAPIError(
-            "Mercado Livre retornou HTTP "
-            f"{response.status_code} ao abrir a vitrine."
+            "Erro ao abrir a vitrine: "
+            f"HTTP {response.status_code}"
         )
 
     html = (
@@ -625,74 +568,126 @@ def _abrir_vitrine(
         or ""
     )
 
-    if not html:
+    # ========================================================
+    # CASO O LINK JÁ SEJA UM PRODUTO
+    # ========================================================
 
-        raise MercadoLivreAPIError(
-            "A vitrine retornou HTML vazio."
+    item_id = (
+        extrair_item_id_da_string(
+            url_final
+        )
+    )
+
+    if item_id:
+
+        logger.info(
+            "Link recebido já aponta "
+            "para produto: %s",
+            item_id,
         )
 
+        return (
+            url_final,
+            url_final,
+            item_id,
+        )
+
+    # ========================================================
+    # VITRINE
+    # ========================================================
+
+    logger.info(
+        "Procurando botão/link "
+        "do produto dentro da vitrine..."
+    )
+
+    link_produto, item_id = (
+        _encontrar_produto_na_vitrine(
+            html,
+            url_final,
+        )
+    )
+
+    if not link_produto:
+
+        raise MercadoLivreAPIError(
+            "O produto foi encontrado no HTML, "
+            "mas o link para abrir o produto "
+            "não foi encontrado."
+        )
+
+    logger.info(
+        "Link real do produto encontrado: %s",
+        link_produto,
+    )
+
     return (
-        session,
         url_final,
-        html,
+        link_produto,
+        item_id,
     )
 
 
 # ============================================================
-# ENCONTRAR PRODUTO NA VITRINE
+# ABRIR PÁGINA REAL DO PRODUTO
 # ============================================================
 
-def encontrar_produto_na_vitrine(
-    link: str,
-) -> Tuple[
-    requests.Session,
-    str,
-    str,
-]:
-
-    (
-        session,
-        url_vitrine,
-        html,
-    ) = _abrir_vitrine(
-        link
-    )
+def _abrir_pagina_produto(
+    session: requests.Session,
+    link_produto: str,
+) -> Tuple[str, str]:
 
     logger.info(
-        "Analisando vitrine: %s",
-        url_vitrine,
+        "Abrindo o link real do produto: %s",
+        link_produto,
     )
 
-    soup = BeautifulSoup(
-        html,
-        "html.parser",
-    )
+    try:
 
-    # --------------------------------------------------------
-    # Procurar link direto do produto
-    # --------------------------------------------------------
-
-    url_produto = _encontrar_link_produto(
-        soup,
-        url_vitrine,
-    )
-
-    if not url_produto:
-
-        raise MercadoLivreAPIError(
-            "A vitrine foi aberta, mas não foi "
-            "encontrado nenhum link para produto."
+        response = session.get(
+            link_produto,
+            allow_redirects=True,
+            timeout=HTTP_TIMEOUT,
         )
 
-    logger.info(
-        "Produto encontrado na vitrine: %s",
-        url_produto,
+    except requests.RequestException as erro:
+
+        raise MercadoLivreAPIError(
+            "Erro ao abrir o link do produto: "
+            f"{erro}"
+        ) from erro
+
+    url_final = (
+        response.url
+        or link_produto
     )
 
+    logger.info(
+        "Página do produto retornou HTTP %d | URL final: %s",
+        response.status_code,
+        url_final,
+    )
+
+    if _eh_account_verification(
+        url_final
+    ):
+
+        raise MercadoLivreAPIError(
+            "O Mercado Livre redirecionou "
+            "a página do produto para "
+            "account-verification."
+        )
+
+    if response.status_code >= 400:
+
+        raise MercadoLivreAPIError(
+            "Erro ao abrir página do produto: "
+            f"HTTP {response.status_code}"
+        )
+
     return (
-        session,
-        url_vitrine,
-        url_produto,
+        url_final,
+        response.text or "",
     )
 
 
@@ -792,147 +787,14 @@ def _extrair_json_ld(
 
 
 # ============================================================
-# EXTRAIR PREÇO
-# ============================================================
-
-def _converter_float(
-    valor: Any,
-) -> Optional[float]:
-
-    if valor is None:
-        return None
-
-    try:
-
-        if isinstance(
-            valor,
-            (int, float),
-        ):
-
-            return float(
-                valor
-            )
-
-        texto = (
-            str(valor)
-            .strip()
-        )
-
-        texto = (
-            texto
-            .replace(
-                "R$",
-                "",
-            )
-            .strip()
-        )
-
-        # 1.234,56
-        if (
-            "," in texto
-            and "." in texto
-        ):
-
-            texto = (
-                texto
-                .replace(
-                    ".",
-                    "",
-                )
-                .replace(
-                    ",",
-                    ".",
-                )
-            )
-
-        # 1234,56
-        elif "," in texto:
-
-            texto = (
-                texto
-                .replace(
-                    ",",
-                    ".",
-                )
-            )
-
-        return float(
-            texto
-        )
-
-    except (
-        ValueError,
-        TypeError,
-    ):
-
-        return None
-
-
-# ============================================================
-# EXTRAIR DADOS DA PÁGINA DO PRODUTO
+# EXTRAIR DADOS DA PÁGINA
 # ============================================================
 
 def _extrair_dados_produto(
-    session: requests.Session,
+    html: str,
     url_produto: str,
+    item_id: Optional[str],
 ) -> Dict[str, Any]:
-
-    logger.info(
-        "Abrindo página do produto: %s",
-        url_produto,
-    )
-
-    try:
-
-        response = session.get(
-            url_produto,
-            allow_redirects=True,
-            timeout=HTTP_TIMEOUT,
-        )
-
-    except requests.RequestException as erro:
-
-        raise MercadoLivreAPIError(
-            "Erro ao abrir página do produto: "
-            f"{erro}"
-        ) from erro
-
-    url_final = (
-        response.url
-        or url_produto
-    )
-
-    logger.info(
-        "Página do produto HTTP %d | URL final: %s",
-        response.status_code,
-        url_final,
-    )
-
-    # --------------------------------------------------------
-    # Não aceitar account-verification
-    # --------------------------------------------------------
-
-    if (
-        "account-verification"
-        in url_final.lower()
-    ):
-
-        raise MercadoLivreAPIError(
-            "O Mercado Livre redirecionou a página "
-            "do produto para account-verification."
-        )
-
-    if response.status_code >= 400:
-
-        raise MercadoLivreAPIError(
-            "Erro ao abrir página do produto: "
-            f"HTTP {response.status_code}"
-        )
-
-    html = (
-        response.text
-        or ""
-    )
 
     soup = BeautifulSoup(
         html,
@@ -944,36 +806,21 @@ def _extrair_dados_produto(
     )
 
     # ========================================================
-    # ITEM ID
-    # ========================================================
-
-    item_id = (
-        extrair_item_id_da_string(
-            url_final
-        )
-        or extrair_item_id_da_string(
-            html
-        )
-    )
-
-    # ========================================================
     # TÍTULO
     # ========================================================
 
     titulo = None
 
-    titulo_elem = soup.find(
+    elemento = soup.find(
         "h1",
         class_="ui-pdp-title",
     )
 
-    if titulo_elem:
+    if elemento:
 
-        titulo = (
-            titulo_elem.get_text(
-                " ",
-                strip=True,
-            )
+        titulo = elemento.get_text(
+            " ",
+            strip=True,
         )
 
     if not titulo:
@@ -991,18 +838,9 @@ def _extrair_dados_produto(
 
         if meta:
 
-            titulo = (
-                meta.get(
-                    "content"
-                )
-                or None
+            titulo = meta.get(
+                "content"
             )
-
-    if not titulo:
-
-        titulo = (
-            "Produto Mercado Livre"
-        )
 
     # ========================================================
     # IMAGEM
@@ -1010,18 +848,15 @@ def _extrair_dados_produto(
 
     image_url = None
 
-    meta_image = soup.find(
+    meta = soup.find(
         "meta",
         property="og:image",
     )
 
-    if meta_image:
+    if meta:
 
-        image_url = (
-            meta_image.get(
-                "content"
-            )
-            or None
+        image_url = meta.get(
+            "content"
         )
 
     if not image_url:
@@ -1066,18 +901,29 @@ def _extrair_dados_produto(
 
     price = None
 
-    meta_price = soup.find(
+    meta = soup.find(
         "meta",
         itemprop="price",
     )
 
-    if meta_price:
+    if meta:
 
-        price = _converter_float(
-            meta_price.get(
-                "content"
-            )
+        valor = meta.get(
+            "content"
         )
+
+        try:
+
+            if valor:
+                price = float(
+                    valor
+                )
+
+        except (
+            ValueError,
+            TypeError,
+        ):
+            pass
 
     if price is None:
 
@@ -1101,125 +947,91 @@ def _extrair_dados_produto(
             dict,
         ):
 
-            price = _converter_float(
-                offers.get(
-                    "price"
-                )
+            valor = offers.get(
+                "price"
             )
 
-    # ========================================================
-    # PREÇO ORIGINAL
-    # ========================================================
+            try:
 
-    original_price = None
+                if valor is not None:
 
-    meta_original = soup.find(
-        "meta",
-        itemprop="price",
-    )
+                    price = float(
+                        valor
+                    )
 
-    # Alguns anúncios disponibilizam
-    # o preço anterior através de classes
-    # específicas.
-
-    elementos_preco_original = soup.select(
-        ".ui-pdp-price__original-value"
-    )
-
-    if elementos_preco_original:
-
-        original_text = (
-            elementos_preco_original[0]
-            .get_text(
-                " ",
-                strip=True,
-            )
-        )
-
-        original_price = _converter_float(
-            original_text
-        )
-
-    # ========================================================
-    # DESCONTO
-    # ========================================================
-
-    discount = None
-
-    if (
-        price is not None
-        and original_price is not None
-        and original_price > 0
-        and price < original_price
-    ):
-
-        discount = round(
-            (
-                (
-                    original_price
-                    - price
-                )
-                / original_price
-            )
-            * 100,
-            2,
-        )
+            except (
+                ValueError,
+                TypeError,
+            ):
+                pass
 
     # ========================================================
     # MOEDA
     # ========================================================
 
-    currency_id = (
-        json_ld.get(
-            "offers",
-            {}
-        )
-        if isinstance(
-            json_ld.get(
-                "offers"
-            ),
-            dict,
-        )
-        else {}
+    currency = "BRL"
+
+    offers = json_ld.get(
+        "offers"
     )
 
-    currency_id = (
-        currency_id.get(
-            "priceCurrency"
+    if isinstance(
+        offers,
+        list,
+    ):
+
+        offers = (
+            offers[0]
+            if offers
+            else {}
         )
-        or "BRL"
-    )
+
+    if isinstance(
+        offers,
+        dict,
+    ):
+
+        currency = (
+            offers.get(
+                "priceCurrency"
+            )
+            or "BRL"
+        )
 
     # ========================================================
     # VALIDAÇÃO
     # ========================================================
 
-    if (
-        titulo == "Produto Mercado Livre"
-        and not image_url
-        and price is None
+    if not any(
+        (
+            titulo,
+            image_url,
+            price is not None,
+        )
     ):
 
         raise MercadoLivreAPIError(
-            "A página foi aberta, mas não foi possível "
-            "extrair dados do produto."
+            "A página aberta não contém "
+            "dados reconhecíveis do produto."
         )
 
-    # ========================================================
-    # PRODUTO FINAL
-    # ========================================================
+    return {
+        "itemId": (
+            item_id
+            or extrair_item_id_da_string(
+                url_produto
+            )
+        ),
 
-    produto = {
+        "productName": (
+            titulo
+            or "Produto Mercado Livre"
+        ),
 
-        "itemId": item_id,
-
-        "shopId": None,
-
-        "sellerId": None,
-
-        "productName": titulo,
-
-        "title": titulo,
+        "title": (
+            titulo
+            or "Produto Mercado Livre"
+        ),
 
         "price": price,
 
@@ -1227,11 +1039,11 @@ def _extrair_dados_produto(
 
         "priceMax": price,
 
-        "originalPrice": original_price,
+        "originalPrice": None,
 
-        "priceDiscountRate": discount,
+        "priceDiscountRate": None,
 
-        "currencyId": currency_id,
+        "currencyId": currency,
 
         "sales": None,
 
@@ -1241,9 +1053,9 @@ def _extrair_dados_produto(
 
         "thumbnail": image_url,
 
-        "productLink": url_final,
+        "productLink": url_produto,
 
-        "permalink": url_final,
+        "permalink": url_produto,
 
         "shopName": None,
 
@@ -1264,32 +1076,11 @@ def _extrair_dados_produto(
         "siteId": "MLB",
 
         "mercadolivreData": {
-            "jsonLd": json_ld,
-            "url": url_final,
+            "source": "vitrine_web",
+            "item_id": item_id,
+            "url": url_produto,
         },
     }
-
-    logger.info(
-        "Produto extraído com sucesso: %s",
-        titulo,
-    )
-
-    logger.info(
-        "Preço encontrado: %s",
-        price,
-    )
-
-    logger.info(
-        "Imagem encontrada: %s",
-        bool(image_url),
-    )
-
-    logger.info(
-        "Item ID encontrado: %s",
-        item_id,
-    )
-
-    return produto
 
 
 # ============================================================
@@ -1311,28 +1102,17 @@ def buscar_produto_por_link(
         .strip()
     )
 
-    logger.info(
-        "=================================================="
-    )
-
-    logger.info(
-        "Iniciando busca pelo link recebido."
-    )
-
-    logger.info(
-        "Link original: %s",
-        link,
-    )
+    session = _obter_sessao_web()
 
     # ========================================================
-    # 1. ABRIR VITRINE
+    # 1. ABRE O LINK RECEBIDO PELO BOT
     # ========================================================
 
     (
-        session,
         url_vitrine,
-        url_produto,
-    ) = encontrar_produto_na_vitrine(
+        link_produto,
+        item_id,
+    ) = resolver_link_da_vitrine(
         link
     )
 
@@ -1342,66 +1122,56 @@ def buscar_produto_por_link(
     )
 
     logger.info(
-        "Link do produto encontrado: %s",
-        url_produto,
+        "Link real do produto: %s",
+        link_produto,
+    )
+
+    logger.info(
+        "Item ID identificado: %s",
+        item_id,
     )
 
     # ========================================================
-    # 2. ABRIR PRODUTO
+    # 2. ABRE O LINK DO BOTÃO
+    # ========================================================
+
+    url_produto_final, html_produto = (
+        _abrir_pagina_produto(
+            session,
+            link_produto,
+        )
+    )
+
+    # ========================================================
+    # 3. EXTRAI OS DADOS
     # ========================================================
 
     produto = _extrair_dados_produto(
-        session,
-        url_produto,
+        html=html_produto,
+        url_produto=url_produto_final,
+        item_id=item_id,
     )
 
     # ========================================================
-    # 3. PRESERVAR LINKS
+    # 4. PRESERVA LINKS
     # ========================================================
 
-    produto.update({
+    produto.update(
+        {
+            "manualAffiliateLink": link,
 
-        "manualAffiliateLink": link,
+            "affiliateLink": link,
 
-        "affiliateLink": link,
+            "originalAffiliateLink": link,
 
-        "originalAffiliateLink": link,
+            "vitrineLink": url_vitrine,
 
-        "resolvedVitrineLink": url_vitrine,
+            "productButtonLink": link_produto,
 
-        "resolvedProductLink": url_produto,
-
-        "productLink": (
-            produto.get(
-                "productLink"
-            )
-            or url_produto
-        ),
-
-        "permalink": (
-            produto.get(
-                "permalink"
-            )
-            or url_produto
-        ),
-    })
-
-    # ========================================================
-    # 4. GARANTIR ITEM ID
-    # ========================================================
-
-    if not produto.get(
-        "itemId"
-    ):
-
-        produto["itemId"] = (
-            extrair_item_id_da_string(
-                url_produto
-            )
-        )
-
-    logger.info(
-        "=================================================="
+            "resolvedProductLink": (
+                url_produto_final
+            ),
+        }
     )
 
     logger.info(
@@ -1409,38 +1179,6 @@ def buscar_produto_por_link(
         produto.get(
             "productName"
         ),
-    )
-
-    logger.info(
-        "Item ID: %s",
-        produto.get(
-            "itemId"
-        ),
-    )
-
-    logger.info(
-        "Preço: %s",
-        produto.get(
-            "price"
-        ),
-    )
-
-    logger.info(
-        "Imagem: %s",
-        produto.get(
-            "imageUrl"
-        ),
-    )
-
-    logger.info(
-        "Link produto: %s",
-        produto.get(
-            "productLink"
-        ),
-    )
-
-    logger.info(
-        "=================================================="
     )
 
     return produto
