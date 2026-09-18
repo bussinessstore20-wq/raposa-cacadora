@@ -33,12 +33,13 @@ from mercadolivre import (
 # OAUTH MERCADO LIVRE
 # ============================================================
 
+import mercadolivre_oauth
+
 from mercadolivre_oauth import (
     oauth_login_response,
     oauth_callback_response,
     oauth_status_response,
 )
-
 
 # ============================================================
 # CONFIGURAÇÃO
