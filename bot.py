@@ -2567,17 +2567,21 @@ async def main():
         logger.info(
             "Telegram iniciado com sucesso."
         )
-        
+
         logger.info(
             "Bot operacional."
         )
-        
+
+        # ----------------------------------------------------
+        # INICIAR WORKER
+        # ----------------------------------------------------
+
         await iniciar_worker(
             application
         )
-        
+
         logger.info(
-            "Worker de publicação iniciado manualmente pelo main."
+            "Worker de publicação iniciado pelo main."
         )
 
         # ----------------------------------------------------
