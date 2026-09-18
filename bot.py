@@ -29,6 +29,16 @@ from mercadolivre import (
     MercadoLivreAPIError,
 )
 
+# ============================================================
+# OAUTH MERCADO LIVRE
+# ============================================================
+
+from mercadolivre_oauth import (
+    oauth_login_response,
+    oauth_callback_response,
+    oauth_status_response,
+)
+
 
 # ============================================================
 # CONFIGURAÇÃO
@@ -136,7 +146,7 @@ worker_task: asyncio.Task | None = None
 
 
 # ============================================================
-# SERVIDOR HTTP PARA O RENDER
+# SERVIDOR HTTP PARA O RENDER + OAUTH
 # ============================================================
 
 class HealthHandler(
@@ -145,17 +155,184 @@ class HealthHandler(
 
     def do_GET(self):
 
-        self.send_response(200)
+        try:
+
+            caminho = self.path
+
+            # ------------------------------------------------
+            # Separar caminho da query string
+            # ------------------------------------------------
+
+            if "?" in caminho:
+
+                rota, query_string = caminho.split(
+                    "?",
+                    1,
+                )
+
+            else:
+
+                rota = caminho
+                query_string = ""
+
+            # ------------------------------------------------
+            # HEALTH CHECK
+            # ------------------------------------------------
+
+            if rota == "/":
+
+                self._responder(
+                    status=200,
+                    content_type="text/plain; charset=utf-8",
+                    body="Raposa Cacadora OK",
+                )
+
+                return
+
+            # ------------------------------------------------
+            # LOGIN MERCADO LIVRE
+            # ------------------------------------------------
+
+            if rota == "/mercadolivre/login":
+
+                status, headers, body = (
+                    oauth_login_response()
+                )
+
+                self._responder(
+                    status=status,
+                    content_type=headers.get(
+                        "Content-Type",
+                        "text/html; charset=utf-8",
+                    ),
+                    body=body,
+                    extra_headers=headers,
+                )
+
+                return
+
+            # ------------------------------------------------
+            # CALLBACK MERCADO LIVRE
+            # ------------------------------------------------
+
+            if rota == "/mercadolivre/callback":
+
+                status, headers, body = (
+                    oauth_callback_response(
+                        query_string
+                    )
+                )
+
+                self._responder(
+                    status=status,
+                    content_type=headers.get(
+                        "Content-Type",
+                        "text/html; charset=utf-8",
+                    ),
+                    body=body,
+                    extra_headers=headers,
+                )
+
+                return
+
+            # ------------------------------------------------
+            # STATUS OAUTH
+            # ------------------------------------------------
+
+            if rota == "/mercadolivre/status":
+
+                status, headers, body = (
+                    oauth_status_response()
+                )
+
+                self._responder(
+                    status=status,
+                    content_type=headers.get(
+                        "Content-Type",
+                        "text/html; charset=utf-8",
+                    ),
+                    body=body,
+                    extra_headers=headers,
+                )
+
+                return
+
+            # ------------------------------------------------
+            # ROTA NÃO ENCONTRADA
+            # ------------------------------------------------
+
+            self._responder(
+                status=404,
+                content_type="text/plain; charset=utf-8",
+                body="Not Found",
+            )
+
+        except Exception as erro:
+
+            logger.exception(
+                "Erro no servidor HTTP: %s",
+                erro,
+            )
+
+            try:
+
+                self._responder(
+                    status=500,
+                    content_type="text/plain; charset=utf-8",
+                    body="Internal Server Error",
+                )
+
+            except Exception:
+                pass
+
+    def _responder(
+        self,
+        status: int,
+        content_type: str,
+        body: str,
+        extra_headers: dict | None = None,
+    ):
+
+        self.send_response(status)
 
         self.send_header(
             "Content-Type",
-            "text/plain; charset=utf-8",
+            content_type,
+        )
+
+        self.send_header(
+            "Cache-Control",
+            "no-store",
+        )
+
+        if extra_headers:
+
+            for nome, valor in extra_headers.items():
+
+                if nome.lower() in (
+                    "content-type",
+                    "content-length",
+                ):
+                    continue
+
+                self.send_header(
+                    nome,
+                    valor,
+                )
+
+        corpo = body.encode(
+            "utf-8"
+        )
+
+        self.send_header(
+            "Content-Length",
+            str(len(corpo)),
         )
 
         self.end_headers()
 
         self.wfile.write(
-            b"Raposa Cacadora OK"
+            corpo
         )
 
     def log_message(
@@ -183,6 +360,14 @@ def iniciar_servidor_http():
             PORT,
         )
 
+        logger.info(
+            "Health check: /"
+        )
+
+        logger.info(
+            "Mercado Livre OAuth: /mercadolivre/login"
+        )
+
         servidor.serve_forever()
 
     except Exception as erro:
@@ -194,7 +379,7 @@ def iniciar_servidor_http():
 
 
 # ============================================================
-# CONFIGURAÇÃO
+# VALIDAÇÃO DA CONFIGURAÇÃO
 # ============================================================
 
 def validar_configuracao():
@@ -226,7 +411,57 @@ def validar_configuracao():
             "SUPABASE_KEY não configurada."
         )
 
+    # --------------------------------------------------------
+    # OAUTH MERCADO LIVRE
+    # --------------------------------------------------------
+
+    oauth_client_id = os.getenv(
+        "MERCADOLIVRE_CLIENT_ID",
+        "",
+    ).strip()
+
+    oauth_client_secret = os.getenv(
+        "MERCADOLIVRE_CLIENT_SECRET",
+        "",
+    ).strip()
+
+    oauth_redirect_uri = os.getenv(
+        "MERCADOLIVRE_REDIRECT_URI",
+        "",
+    ).strip()
+
+    if not oauth_client_id:
+
+        erros.append(
+            "MERCADOLIVRE_CLIENT_ID não configurado."
+        )
+
+    if not oauth_client_secret:
+
+        erros.append(
+            "MERCADOLIVRE_CLIENT_SECRET não configurado."
+        )
+
+    if not oauth_redirect_uri:
+
+        erros.append(
+            "MERCADOLIVRE_REDIRECT_URI não configurado."
+        )
+
+    elif oauth_redirect_uri != (
+        "https://raposa-cacadora.onrender.com/"
+        "mercadolivre/callback"
+    ):
+
+        erros.append(
+            "MERCADOLIVRE_REDIRECT_URI inválido. "
+            "Use exatamente "
+            "https://raposa-cacadora.onrender.com/"
+            "mercadolivre/callback"
+        )
+
     if INTERVALO_MINUTOS < 1:
+
         erros.append(
             "INTERVALO_MINUTOS deve ser maior que 0."
         )
@@ -234,7 +469,10 @@ def validar_configuracao():
     if erros:
 
         for erro in erros:
-            logger.error(erro)
+
+            logger.error(
+                erro
+            )
 
         raise RuntimeError(
             "Configuração inválida."
@@ -264,6 +502,10 @@ def validar_configuracao():
     logger.info(
         "Porta HTTP: %d",
         PORT,
+    )
+
+    logger.info(
+        "OAuth Mercado Livre configurado."
     )
 
 
@@ -324,28 +566,23 @@ def extrair_links(
             "]",
             "}",
         ):
+
             link = link[:-1]
 
         if not (
             link.startswith("http://")
             or link.startswith("https://")
         ):
+
             continue
 
         link_lower = link.lower()
 
-        # ----------------------------------------------------
-        # LINKS CURTOS DE AFILIADO
-        # ----------------------------------------------------
-
         if "meli.la/" in link_lower:
 
             links.append(link)
-            continue
 
-        # ----------------------------------------------------
-        # LINKS DO MERCADO LIVRE
-        # ----------------------------------------------------
+            continue
 
         if (
             "mercadolivre.com.br" in link_lower
@@ -353,10 +590,6 @@ def extrair_links(
         ):
 
             links.append(link)
-
-    # --------------------------------------------------------
-    # REMOVER DUPLICADOS
-    # --------------------------------------------------------
 
     resultado = []
     vistos = set()
@@ -428,15 +661,13 @@ def inserir_links(
                 duplicados += 1
 
                 logger.info(
-                    "Link já existente: %s",
-                    link,
+                    "Link já existente."
                 )
 
             else:
 
                 logger.exception(
-                    "Erro ao inserir link: %s",
-                    link,
+                    "Erro ao inserir link."
                 )
 
                 erros.append(link)
@@ -523,7 +754,6 @@ def marcar_publicado(
 ):
 
     if supabase is None:
-
         return
 
     agora = datetime.now(
@@ -587,7 +817,6 @@ def marcar_erro(
 ):
 
     if supabase is None:
-
         return
 
     resposta = (
@@ -636,7 +865,6 @@ def marcar_erro(
 def recuperar_processamentos_presos():
 
     if supabase is None:
-
         return
 
     limite = (
@@ -661,7 +889,6 @@ def recuperar_processamentos_presos():
     )
 
     if not resposta.data:
-
         return
 
     for produto in resposta.data:
@@ -700,7 +927,6 @@ def numero(
     try:
 
         if valor is None:
-
             return padrao
 
         texto = str(
@@ -708,7 +934,6 @@ def numero(
         ).strip()
 
         if not texto:
-
             return padrao
 
         return float(
@@ -731,7 +956,6 @@ def inteiro(
     try:
 
         if valor is None:
-
             return padrao
 
         return int(
@@ -835,19 +1059,10 @@ def montar_mensagem(
         or "Mercado Livre"
     )
 
-    # --------------------------------------------------------
-    # PREÇO
-    # --------------------------------------------------------
-
     preco_atual = preco
 
     if preco_min > 0:
-
         preco_atual = preco_min
-
-    # --------------------------------------------------------
-    # PREÇO ANTERIOR
-    # --------------------------------------------------------
 
     if (
         desconto > 0
@@ -867,10 +1082,6 @@ def montar_mensagem(
 
         preco_anterior = preco_atual
 
-    # --------------------------------------------------------
-    # AVALIAÇÃO
-    # --------------------------------------------------------
-
     if avaliacao > 0:
 
         avaliacao_texto = (
@@ -879,13 +1090,7 @@ def montar_mensagem(
 
     else:
 
-        avaliacao_texto = (
-            "N/D"
-        )
-
-    # --------------------------------------------------------
-    # MENSAGEM
-    # --------------------------------------------------------
+        avaliacao_texto = "N/D"
 
     mensagem = (
         "🔥 <b>OFERTA EM DESTAQUE</b>\n"
@@ -943,10 +1148,6 @@ async def publicar_produto(
         ]
     )
 
-    # ========================================================
-    # TENTAR ENVIAR COM IMAGEM
-    # ========================================================
-
     if image_url:
 
         try:
@@ -976,10 +1177,6 @@ async def publicar_produto(
                 "Falha ao enviar imagem: %s",
                 erro,
             )
-
-    # ========================================================
-    # FALLBACK PARA TEXTO
-    # ========================================================
 
     try:
 
@@ -1047,46 +1244,27 @@ async def enviar_notificacao_admin(
 # PROCESSAR PRODUTO
 # ============================================================
 
-# Certifique-se de importar a função do Mercado Livre no topo do arquivo bot.py:
-from mercadolivre import buscar_produto_por_link as buscar_produto_ml
-# E mantenha a importação da sua função da Shopee (exemplo):
-# from shopee import buscar_produto_por_link as buscar_produto_shopee
-
-
 async def processar_produto(
     bot: Bot,
     produto_fila: dict[str, Any],
 ):
+
     produto_id = produto_fila["id"]
     link = produto_fila["link"]
 
-    logger.info("==========================================")
-    logger.info("Processando produto ID %s", produto_id)
-    logger.info("Link: %s", link)
+    logger.info(
+        "=========================================="
+    )
 
-    # ----------------------------------------------------
-    # IDENTIFICAÇÃO DA PLATAFORMA PELO DOMÍNIO DO LINK
-    # ----------------------------------------------------
-    link_lower = link.lower().strip()
+    logger.info(
+        "Processando produto ID %s",
+        produto_id,
+    )
 
-    if any(dom in link_lower for dom in ["meli.la", "mercadolivre.com", "mercadolibre.com"]):
-        logger.info("Plataforma detectada: Mercado Livre")
-        dados_produto = await asyncio.to_thread(
-            buscar_produto_ml,
-            link
-        )
-
-    elif "shopee" in link_lower:
-        logger.info("Plataforma detectada: Shopee")
-        dados_produto = await asyncio.to_thread(
-            buscar_produto_shopee,  # Nome da sua função original da Shopee
-            link
-        )
-
-    else:
-        raise ValueError(f"Plataforma não suportada para o link: {link}")
-
-    # Segue o fluxo normal de envio para o Telegram e atualização no Supabase...
+    # Não registrar o link completo em logs públicos.
+    logger.info(
+        "Link recebido para processamento."
+    )
 
     # ========================================================
     # RESERVAR PRODUTO
@@ -1109,7 +1287,7 @@ async def processar_produto(
     try:
 
         # ====================================================
-        # BUSCAR MERCADO LIVRE
+        # BUSCAR PRODUTO
         # ====================================================
 
         produto = await asyncio.to_thread(
@@ -1202,7 +1380,6 @@ async def processar_produto(
                 "❌ <b>ERRO NO MERCADO LIVRE</b>\n"
                 "\n"
                 f"🆔 Fila: <b>#{produto_id}</b>\n"
-                f"🔗 {link}\n"
                 f"⚠️ <b>{str(erro)[:1500]}</b>"
             ),
         )
@@ -1228,7 +1405,6 @@ async def processar_produto(
                 "❌ <b>ERRO AO PROCESSAR PRODUTO</b>\n"
                 "\n"
                 f"🆔 Fila: <b>#{produto_id}</b>\n"
-                f"🔗 {link}\n"
                 f"⚠️ <b>{str(erro)[:1500]}</b>"
             ),
         )
@@ -1268,11 +1444,9 @@ async def comando_start(
 ):
 
     if not usuario_autorizado(update):
-
         return
 
     if update.message is None:
-
         return
 
     mensagem = (
@@ -1283,9 +1457,6 @@ async def comando_start(
         "\n"
         f"📦 Máximo por envio: <b>{MAX_LINKS_POR_ENVIO}</b>\n"
         f"⏱️ Intervalo: <b>{INTERVALO_MINUTOS} minutos</b>\n"
-        "\n"
-        "Exemplo de link de afiliado:\n"
-        "<code>https://meli.la/12w2nSd</code>\n"
         "\n"
         "O bot salva tudo no Supabase, então "
         "a fila continua mesmo se o Render reiniciar.\n"
@@ -1310,15 +1481,12 @@ async def comando_status(
 ):
 
     if not usuario_autorizado(update):
-
         return
 
     if supabase is None:
-
         return
 
     if update.message is None:
-
         return
 
     try:
@@ -1415,15 +1583,12 @@ async def comando_fila(
 ):
 
     if not usuario_autorizado(update):
-
         return
 
     if supabase is None:
-
         return
 
     if update.message is None:
-
         return
 
     try:
@@ -1526,15 +1691,12 @@ async def comando_erros(
 ):
 
     if not usuario_autorizado(update):
-
         return
 
     if supabase is None:
-
         return
 
     if update.message is None:
-
         return
 
     try:
@@ -1634,15 +1796,12 @@ async def comando_retry(
 ):
 
     if not usuario_autorizado(update):
-
         return
 
     if supabase is None:
-
         return
 
     if update.message is None:
-
         return
 
     try:
@@ -1702,11 +1861,9 @@ async def comando_stop(
     global bot_ativo
 
     if not usuario_autorizado(update):
-
         return
 
     if update.message is None:
-
         return
 
     bot_ativo = False
@@ -1743,11 +1900,10 @@ async def comando_iniciar(
     global bot_ativo
 
     if not usuario_autorizado(update):
-
         return
 
     if update.message is None:
-              return
+        return
 
     bot_ativo = True
 
@@ -1790,29 +1946,27 @@ async def callback_controle(
         return
 
     try:
-        await query.answer()
-    except Exception:
-        pass
 
-    # --------------------------------------------------------
-    # AUTORIZAÇÃO
-    # --------------------------------------------------------
+        await query.answer()
+
+    except Exception:
+
+        pass
 
     if not usuario_autorizado(update):
 
         try:
+
             await query.answer(
                 "Você não tem autorização.",
                 show_alert=True,
             )
+
         except Exception:
+
             pass
 
         return
-
-    # --------------------------------------------------------
-    # INICIAR
-    # --------------------------------------------------------
 
     if query.data == "bot_iniciar":
 
@@ -1845,10 +1999,6 @@ async def callback_controle(
             )
 
         return
-
-    # --------------------------------------------------------
-    # STOP
-    # --------------------------------------------------------
 
     if query.data == "bot_stop":
 
@@ -1894,11 +2044,9 @@ async def receber_links(
 ):
 
     if not usuario_autorizado(update):
-
         return
 
     if update.message is None:
-
         return
 
     texto = (
@@ -1907,16 +2055,11 @@ async def receber_links(
     ).strip()
 
     if not texto:
-
         return
 
     links = extrair_links(
         texto
     )
-
-    # --------------------------------------------------------
-    # NENHUM LINK
-    # --------------------------------------------------------
 
     if not links:
 
@@ -1924,19 +2067,12 @@ async def receber_links(
             (
                 "⚠️ <b>NENHUM LINK VÁLIDO</b>\n"
                 "\n"
-                "Envie um link do Mercado Livre, "
-                "por exemplo:\n"
-                "\n"
-                "<code>https://meli.la/12w2nSd</code>"
+                "Envie um link do Mercado Livre."
             ),
             parse_mode=ParseMode.HTML,
         )
 
         return
-
-    # --------------------------------------------------------
-    # LIMITE
-    # --------------------------------------------------------
 
     if len(links) > MAX_LINKS_POR_ENVIO:
 
@@ -1953,10 +2089,6 @@ async def receber_links(
     else:
 
         aviso_limite = ""
-
-    # --------------------------------------------------------
-    # INSERIR NO SUPABASE
-    # --------------------------------------------------------
 
     try:
 
@@ -1983,10 +2115,6 @@ async def receber_links(
         )
 
         return
-
-    # --------------------------------------------------------
-    # RESPOSTA
-    # --------------------------------------------------------
 
     linhas = [
         "🦊 <b>LINKS RECEBIDOS</b>",
@@ -2018,10 +2146,6 @@ async def worker_publicacao(
         "Worker de publicação iniciado."
     )
 
-    # --------------------------------------------------------
-    # PRIMEIRA RECUPERAÇÃO
-    # --------------------------------------------------------
-
     try:
 
         await asyncio.to_thread(
@@ -2035,10 +2159,6 @@ async def worker_publicacao(
             erro,
         )
 
-    # --------------------------------------------------------
-    # LOOP
-    # --------------------------------------------------------
-
     while True:
 
         try:
@@ -2051,12 +2171,10 @@ async def worker_publicacao(
 
                 continue
 
-            # =================================================
-            # BUSCAR PRODUTO
-            # =================================================
-
-            produto_fila = await asyncio.to_thread(
-                buscar_proximo_produto
+            produto_fila = (
+                await asyncio.to_thread(
+                    buscar_proximo_produto
+                )
             )
 
             if not produto_fila:
@@ -2071,18 +2189,10 @@ async def worker_publicacao(
 
                 continue
 
-            # =================================================
-            # PROCESSAR
-            # =================================================
-
             await processar_produto(
                 bot=application.bot,
                 produto_fila=produto_fila,
             )
-
-            # =================================================
-            # INTERVALO
-            # =================================================
 
             logger.info(
                 "Aguardando %d minutos "
@@ -2110,13 +2220,13 @@ async def worker_publicacao(
         except Exception as erro:
 
             logger.exception(
-                "Erro inesperado no worker: %s",
+                "Erro no worker de publicação: %s",
                 erro,
             )
 
-            await asyncio.sleep(
-                30
-            )
+            # Evita que um erro inesperado derrube
+            # permanentemente o worker.
+            await asyncio.sleep(30)
 
 
 # ============================================================
@@ -2126,23 +2236,23 @@ async def worker_publicacao(
 async def iniciar_worker(
     application: Application,
 ):
+    """
+    Inicia o worker automático e mantém a referência
+    global da task para permitir cancelamento no encerramento.
+    """
 
     global worker_task
 
-    if worker_task is not None:
+    if worker_task is not None and not worker_task.done():
 
-        if not worker_task.done():
+        logger.warning(
+            "Worker já está em execução."
+        )
 
-            logger.info(
-                "Worker já está em execução."
-            )
-
-            return
+        return
 
     worker_task = asyncio.create_task(
-        worker_publicacao(
-            application
-        )
+        worker_publicacao(application)
     )
 
     logger.info(
@@ -2159,7 +2269,6 @@ async def parar_worker():
     global worker_task
 
     if worker_task is None:
-
         return
 
     if worker_task.done():
@@ -2182,7 +2291,18 @@ async def parar_worker():
 
         pass
 
+    except Exception as erro:
+
+        logger.exception(
+            "Erro ao encerrar worker: %s",
+            erro,
+        )
+
     worker_task = None
+
+    logger.info(
+        "Worker encerrado."
+    )
 
 
 # ============================================================
@@ -2192,30 +2312,21 @@ async def parar_worker():
 async def post_init(
     application: Application,
 ):
+    """
+    Executado depois que o Application do Telegram
+    é inicializado.
+    """
 
     logger.info(
-        "Inicializando aplicação..."
+        "Inicializando serviços do bot..."
     )
-
-    try:
-
-        iniciar_supabase()
-
-    except Exception as erro:
-
-        logger.exception(
-            "Falha ao iniciar Supabase: %s",
-            erro,
-        )
-
-        raise
 
     await iniciar_worker(
         application
     )
 
     logger.info(
-        "Aplicação inicializada."
+        "Serviços inicializados."
     )
 
 
@@ -2226,23 +2337,26 @@ async def post_init(
 async def post_shutdown(
     application: Application,
 ):
+    """
+    Executado durante o encerramento do Application.
+    """
 
     logger.info(
-        "Encerrando aplicação..."
+        "Encerrando serviços..."
     )
 
     await parar_worker()
 
     logger.info(
-        "Aplicação encerrada."
+        "Serviços encerrados."
     )
 
 
 # ============================================================
-# CRIAR APLICAÇÃO
+# CRIAR APLICAÇÃO TELEGRAM
 # ============================================================
 
-def criar_aplicacao():
+def criar_aplicacao() -> Application:
 
     application = (
         Application.builder()
@@ -2252,9 +2366,9 @@ def criar_aplicacao():
         .build()
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # COMANDOS
-    # ========================================================
+    # --------------------------------------------------------
 
     application.add_handler(
         CommandHandler(
@@ -2305,9 +2419,9 @@ def criar_aplicacao():
         )
     )
 
-    # ========================================================
-    # BOTÕES
-    # ========================================================
+    # --------------------------------------------------------
+    # BOTÕES INLINE
+    # --------------------------------------------------------
 
     application.add_handler(
         CallbackQueryHandler(
@@ -2315,16 +2429,9 @@ def criar_aplicacao():
         )
     )
 
-    # ========================================================
-    # MENSAGENS DE TEXTO
-    # ========================================================
-    #
-    # IMPORTANTE:
-    #
-    # Não usamos filters.COMMAND aqui para não capturar
-    # comandos como texto normal.
-    #
-    # ========================================================
+    # --------------------------------------------------------
+    # RECEBER LINKS
+    # --------------------------------------------------------
 
     application.add_handler(
         MessageHandler(
@@ -2334,6 +2441,10 @@ def criar_aplicacao():
         )
     )
 
+    logger.info(
+        "Handlers do Telegram registrados."
+    )
+
     return application
 
 
@@ -2341,90 +2452,187 @@ def criar_aplicacao():
 # MAIN
 # ============================================================
 
-def main():
+async def main():
 
     logger.info(
         "=========================================="
     )
 
     logger.info(
-        "INICIANDO RAPOSA CAÇADORA"
+        "🦊 RAPOSA CAÇADORA"
     )
 
     logger.info(
-        "Mercado Livre + Telegram + Supabase"
+        "Iniciando aplicação..."
     )
 
     logger.info(
         "=========================================="
     )
 
-    # ========================================================
+    # --------------------------------------------------------
     # VALIDAR CONFIGURAÇÃO
-    # ========================================================
+    # --------------------------------------------------------
 
     validar_configuracao()
 
-    # ========================================================
+    # --------------------------------------------------------
+    # SUPABASE
+    # --------------------------------------------------------
+
+    iniciar_supabase()
+
+    # --------------------------------------------------------
     # SERVIDOR HTTP
-    # ========================================================
-    #
-    # O Render pode utilizar a porta HTTP para health check.
-    #
-    # ========================================================
+    # --------------------------------------------------------
 
     thread_http = threading.Thread(
         target=iniciar_servidor_http,
+        name="http-server",
         daemon=True,
-        name="health-server",
     )
 
     thread_http.start()
 
     logger.info(
-        "Servidor HTTP iniciado."
+        "Servidor HTTP executando em thread separada."
     )
 
-    # ========================================================
-    # APLICAÇÃO TELEGRAM
-    # ========================================================
+    # --------------------------------------------------------
+    # TELEGRAM
+    # --------------------------------------------------------
 
     application = criar_aplicacao()
 
-    # ========================================================
-    # POLLING
-    # ========================================================
-
     logger.info(
-        "Iniciando Telegram polling..."
+        "Iniciando Telegram..."
     )
 
-    application.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=False,
-    )
+    try:
+
+        await application.initialize()
+
+        await application.start()
+
+        # ----------------------------------------------------
+        # INICIAR RECEBIMENTO DE UPDATES
+        # ----------------------------------------------------
+
+        await application.updater.start_polling(
+            allowed_updates=Update.ALL_TYPES
+        )
+
+        logger.info(
+            "Telegram iniciado com sucesso."
+        )
+
+        logger.info(
+            "Bot operacional."
+        )
+
+        # ----------------------------------------------------
+        # MANTER PROCESSO VIVO
+        # ----------------------------------------------------
+
+        while True:
+
+            await asyncio.sleep(
+                3600
+            )
+
+    except asyncio.CancelledError:
+
+        logger.info(
+            "Aplicação cancelada."
+        )
+
+        raise
+
+    except KeyboardInterrupt:
+
+        logger.info(
+            "Aplicação interrompida pelo teclado."
+        )
+
+    except Exception as erro:
+
+        logger.exception(
+            "Erro fatal na aplicação: %s",
+            erro,
+        )
+
+        raise
+
+    finally:
+
+        logger.info(
+            "Iniciando encerramento..."
+        )
+
+        try:
+
+            if application.updater:
+
+                await application.updater.stop()
+
+        except Exception as erro:
+
+            logger.warning(
+                "Erro ao parar updater: %s",
+                erro,
+            )
+
+        try:
+
+            if application.running:
+
+                await application.stop()
+
+        except Exception as erro:
+
+            logger.warning(
+                "Erro ao parar Application: %s",
+                erro,
+            )
+
+        try:
+
+            await application.shutdown()
+
+        except Exception as erro:
+
+            logger.warning(
+                "Erro ao finalizar Application: %s",
+                erro,
+            )
+
+        logger.info(
+            "Aplicação encerrada."
+        )
 
 
 # ============================================================
-# EXECUTAR
+# ENTRYPOINT
 # ============================================================
 
 if __name__ == "__main__":
 
     try:
 
-        main()
+        asyncio.run(
+            main()
+        )
 
     except KeyboardInterrupt:
 
         logger.info(
-            "Bot encerrado manualmente."
+            "Processo interrompido."
         )
 
     except Exception as erro:
 
         logger.exception(
-            "Erro fatal ao iniciar o bot: %s",
+            "Falha ao iniciar o sistema: %s",
             erro,
         )
 
