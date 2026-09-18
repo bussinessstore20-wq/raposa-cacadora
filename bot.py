@@ -2149,92 +2149,55 @@ async def worker_publicacao(
 ):
 
     logger.info(
-        "🚀 Worker de publicação iniciado."
+        "🚀🚀🚀 WORKER DE PUBLICAÇÃO ENTROU NA FUNÇÃO."
     )
-
-    try:
-
-        await asyncio.to_thread(
-            recuperar_processamentos_presos
-        )
-
-        logger.info(
-            "✅ Recuperação de processamentos concluída."
-        )
-
-    except Exception as erro:
-
-        logger.exception(
-            "❌ Erro ao recuperar processamentos presos: %s",
-            erro,
-        )
 
     while True:
 
         try:
 
             logger.info(
-                "🔎 Worker verificando fila. bot_ativo=%s",
+                "🔎 Worker executando. bot_ativo=%s",
                 bot_ativo,
             )
 
             if not bot_ativo:
 
                 logger.info(
-                    "⏸️ Worker pausado: bot_ativo=False."
+                    "⏸️ Worker pausado porque bot_ativo=False."
                 )
 
-                await asyncio.sleep(
-                    5
-                )
+                await asyncio.sleep(5)
 
                 continue
 
-            produto_fila = (
-                await asyncio.to_thread(
-                    buscar_proximo_produto
-                )
+            produto_fila = await asyncio.to_thread(
+                buscar_proximo_produto
+            )
+
+            logger.info(
+                "🔎 Resultado da busca: %s",
+                (
+                    produto_fila.get("id")
+                    if produto_fila
+                    else "NENHUM"
+                ),
             )
 
             if not produto_fila:
 
-                logger.info(
-                    "📭 Nenhum produto pending encontrado."
-                )
-
-                await asyncio.sleep(
-                    30
-                )
+                await asyncio.sleep(30)
 
                 continue
 
             logger.info(
-                "📦 Produto encontrado na fila: ID=%s",
-                produto_fila.get("id"),
+                "📦 ENCONTROU PRODUTO ID=%s",
+                produto_fila["id"],
             )
 
-            sucesso = await processar_produto(
+            await processar_produto(
                 bot=application.bot,
                 produto_fila=produto_fila,
-            )
-
-            if sucesso:
-
-                logger.info(
-                    "✅ Produto ID=%s processado com sucesso.",
-                    produto_fila.get("id"),
-                )
-
-            else:
-
-                logger.warning(
-                    "⚠️ Produto ID=%s não foi publicado.",
-                    produto_fila.get("id"),
-                )
-
-            logger.info(
-                "⏱️ Aguardando %d minutos antes do próximo produto.",
-                INTERVALO_MINUTOS,
             )
 
             await asyncio.sleep(
@@ -2252,43 +2215,92 @@ async def worker_publicacao(
         except Exception as erro:
 
             logger.exception(
-                "❌ Erro no worker de publicação: %s",
+                "❌ Erro no worker: %s",
                 erro,
             )
 
-            await asyncio.sleep(
-                30
-            )
+            await asyncio.sleep(30)
 
 # ============================================================
 # INICIAR WORKER
 # ============================================================
 
-async def iniciar_worker(
+async def worker_publicacao(
     application: Application,
 ):
-    """
-    Inicia o worker automático e mantém a referência
-    global da task para permitir cancelamento no encerramento.
-    """
-
-    global worker_task
-
-    if worker_task is not None and not worker_task.done():
-
-        logger.warning(
-            "Worker já está em execução."
-        )
-
-        return
-
-    worker_task = asyncio.create_task(
-        worker_publicacao(application)
-    )
 
     logger.info(
-        "Task do worker criada."
+        "🚀🚀🚀 WORKER DE PUBLICAÇÃO ENTROU NA FUNÇÃO."
     )
+
+    while True:
+
+        try:
+
+            logger.info(
+                "🔎 Worker executando. bot_ativo=%s",
+                bot_ativo,
+            )
+
+            if not bot_ativo:
+
+                logger.info(
+                    "⏸️ Worker pausado porque bot_ativo=False."
+                )
+
+                await asyncio.sleep(5)
+
+                continue
+
+            produto_fila = await asyncio.to_thread(
+                buscar_proximo_produto
+            )
+
+            logger.info(
+                "🔎 Resultado da busca: %s",
+                (
+                    produto_fila.get("id")
+                    if produto_fila
+                    else "NENHUM"
+                ),
+            )
+
+            if not produto_fila:
+
+                await asyncio.sleep(30)
+
+                continue
+
+            logger.info(
+                "📦 ENCONTROU PRODUTO ID=%s",
+                produto_fila["id"],
+            )
+
+            await processar_produto(
+                bot=application.bot,
+                produto_fila=produto_fila,
+            )
+
+            await asyncio.sleep(
+                INTERVALO_MINUTOS * 60
+            )
+
+        except asyncio.CancelledError:
+
+            logger.info(
+                "🛑 Worker cancelado."
+            )
+
+            raise
+
+        except Exception as erro:
+
+            logger.exception(
+                "❌ Erro no worker: %s",
+                erro,
+            )
+
+            await asyncio.sleep(30)
 
 
 # ============================================================
@@ -2389,13 +2401,12 @@ async def post_shutdown(
 
 def criar_aplicacao() -> Application:
 
-    application = (
-        Application.builder()
-        .token(TELEGRAM_TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
+   application = (
+    Application.builder()
+    .token(TELEGRAM_TOKEN)
+    .post_shutdown(post_shutdown)
+    .build()
+)
 
     # --------------------------------------------------------
     # COMANDOS
@@ -2556,9 +2567,17 @@ async def main():
         logger.info(
             "Telegram iniciado com sucesso."
         )
-
+        
         logger.info(
             "Bot operacional."
+        )
+        
+        await iniciar_worker(
+            application
+        )
+        
+        logger.info(
+            "Worker de publicação iniciado manualmente pelo main."
         )
 
         # ----------------------------------------------------
