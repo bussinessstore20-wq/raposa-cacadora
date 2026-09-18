@@ -46,3 +46,4 @@ services:
 
       - key: COMISSAO_MINIMA
         value: "0"
+        
