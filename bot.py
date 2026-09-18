@@ -2401,12 +2401,12 @@ async def post_shutdown(
 
 def criar_aplicacao() -> Application:
 
-   application = (
-    Application.builder()
-    .token(TELEGRAM_TOKEN)
-    .post_shutdown(post_shutdown)
-    .build()
-)
+    application = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
 
     # --------------------------------------------------------
     # COMANDOS
@@ -2488,7 +2488,6 @@ def criar_aplicacao() -> Application:
     )
 
     return application
-
 
 # ============================================================
 # MAIN
