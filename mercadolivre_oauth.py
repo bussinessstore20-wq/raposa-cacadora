@@ -200,13 +200,14 @@ def validar_e_consumir_state(
 # ============================================================
 
 def criar_url_autorizacao() -> str:
-    """
-    Cria a URL que leva o usuário para autorização
-    no Mercado Livre.
-    """
+
     validar_configuracao_oauth()
 
     state = gerar_state()
+
+    logger.info(
+        "OAuth Mercado Livre: state gerado com sucesso."
+    )
 
     parametros = {
         "response_type": "code",
@@ -215,11 +216,15 @@ def criar_url_autorizacao() -> str:
         "state": state,
     }
 
+    logger.info(
+        "OAuth Mercado Livre: redirect_uri=%s",
+        MERCADOLIVRE_REDIRECT_URI,
+    )
+
     return (
         f"{MERCADOLIVRE_AUTH_URL}"
         f"?{urlencode(parametros)}"
     )
-
 
 # ============================================================
 # RESPOSTA HTTP - LOGIN
