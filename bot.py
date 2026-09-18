@@ -1911,7 +1911,8 @@ async def comando_iniciar(
         return
 
     bot_ativo = True
-
+    worker_task = None
+    
     logger.info(
         "Publicação iniciada pelo administrador."
     )
