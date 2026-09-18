@@ -131,6 +131,10 @@ def iniciar_supabase():
         SUPABASE_KEY,
     )
 
+    mercadolivre_oauth.configurar_supabase(
+        supabase
+    )
+
     logger.info(
         "Supabase conectado."
     )
@@ -196,7 +200,7 @@ class HealthHandler(
             if rota == "/mercadolivre/login":
 
                 status, headers, body = (
-                    oauth_login_response()
+                    mercadolivre_oauth.oauth_login_response()
                 )
 
                 self._responder(
@@ -218,8 +222,8 @@ class HealthHandler(
             if rota == "/mercadolivre/callback":
 
                 status, headers, body = (
-                    oauth_callback_response(
-                        query_string
+                    mercadolivre_oauth.oauth_callback_response(
+                     query_string
                     )
                 )
 
@@ -242,7 +246,7 @@ class HealthHandler(
             if rota == "/mercadolivre/status":
 
                 status, headers, body = (
-                    oauth_status_response()
+                    mercadolivre_oauth.oauth_status_response()
                 )
 
                 self._responder(
