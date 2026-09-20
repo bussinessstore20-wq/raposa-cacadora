@@ -1789,15 +1789,32 @@ async def comando_erros(
             )
 
         texto = "\n\n".join(
-            linhas
         )
 
-        if len(texto) > 4000:
+                for item in registros:
 
-            texto = (
-                texto[:3950]
-                + "\n\n..."
+            erro = (
+                item.get("erro")
+                or "Erro desconhecido"
             )
+
+            if len(erro) > 300:
+                erro = erro[:297] + "..."
+
+            tentativas = inteiro(
+                item.get("tentativas")
+            )
+
+            linhas.append(
+                f"❌ <b>#{item['id']}</b> — "
+                f"Tentativas: <b>{tentativas}</b>\n"
+                f"⚠️ {erro}\n"
+            )
+
+        texto = "\n".join(linhas)
+
+        if len(texto) > 4000:
+            texto = texto[:3950] + "\n\n..."
 
         await update.message.reply_text(
             texto,
@@ -1830,20 +1847,14 @@ async def receber_links(
     if update.message is None:
         return
 
-    texto = (
-        update.message.text
-        or update.message.caption
-        or ""
-    )
+    texto = update.message.text or ""
 
-    links = extrair_links(
-        texto
-    )
+    links = extrair_links(texto)
 
     if not links:
 
         await update.message.reply_text(
-            "❌ Nenhum link do Mercado Livre foi encontrado."
+            "❌ Nenhum link válido do Mercado Livre foi encontrado."
         )
 
         return
@@ -1852,11 +1863,9 @@ async def receber_links(
 
         await update.message.reply_text(
             (
-                "⚠️ Você enviou "
-                f"<b>{len(links)}</b> links.\n\n"
-                f"O máximo permitido por envio é "
-                f"<b>{MAX_LINKS_POR_ENVIO}</b>.\n\n"
-                "Envie os links novamente dentro do limite."
+                f"❌ Você enviou <b>{len(links)}</b> links.\n\n"
+                f"📦 O máximo permitido por envio é "
+                f"<b>{MAX_LINKS_POR_ENVIO}</b>."
             ),
             parse_mode=ParseMode.HTML,
         )
@@ -1865,17 +1874,15 @@ async def receber_links(
 
     try:
 
-        (
-            adicionados,
-            duplicados,
-            erros,
-        ) = await asyncio.to_thread(
-            inserir_links,
-            links,
+        adicionados, duplicados, erros = (
+            await asyncio.to_thread(
+                inserir_links,
+                links,
+            )
         )
 
         linhas = [
-            "🦊 <b>LINKS PROCESSADOS</b>",
+            "🦊 <b>LINKS RECEBIDOS</b>",
             "",
             f"✅ Adicionados: <b>{adicionados}</b>",
             f"♻️ Duplicados: <b>{duplicados}</b>",
@@ -1890,7 +1897,8 @@ async def receber_links(
         linhas.extend(
             [
                 "",
-                "Os links foram colocados na fila.",
+                "⏳ Os produtos serão processados "
+                "automaticamente pela fila.",
             ]
         )
 
@@ -1903,12 +1911,12 @@ async def receber_links(
     except Exception as erro:
 
         logger.exception(
-            "Erro ao inserir links na fila."
+            "Erro ao inserir links."
         )
 
         await update.message.reply_text(
             (
-                "❌ <b>Erro ao adicionar os links.</b>\n\n"
+                "❌ <b>Erro ao adicionar links.</b>\n\n"
                 f"{str(erro)[:1500]}"
             ),
             parse_mode=ParseMode.HTML,
@@ -1916,7 +1924,7 @@ async def receber_links(
 
 
 # ============================================================
-# BOTÕES DE CONTROLE
+# BOTÃO INICIAR / STOP
 # ============================================================
 
 async def callback_controle(
@@ -1925,124 +1933,53 @@ async def callback_controle(
 ):
 
     global bot_ativo
-    global worker_task
+
+    if not usuario_autorizado(update):
+        return
 
     query = update.callback_query
 
     if query is None:
         return
 
-    usuario = query.from_user
-
-    try:
-
-        admin_id = int(
-            TELEGRAM_ADMIN_ID
-        )
-
-    except ValueError:
-
-        await query.answer(
-            "Configuração inválida.",
-            show_alert=True,
-        )
-
-        return
-
-    if usuario.id != admin_id:
-
-        await query.answer(
-            "⛔ Você não tem autorização.",
-            show_alert=True,
-        )
-
-        return
-
     await query.answer()
-
-    # --------------------------------------------------------
-    # INICIAR
-    # --------------------------------------------------------
 
     if query.data == "bot_iniciar":
 
         bot_ativo = True
 
-        if (
-            worker_task is None
-            or worker_task.done()
-        ):
-
-            worker_task = asyncio.create_task(
-                worker_fila(
-                    context.application
-                )
-            )
-
-            logger.info(
-                "Worker iniciado pelo botão."
-            )
-
-        texto = (
-            "🦊 <b>RAPOSA CAÇADORA</b>\n"
-            "\n"
-            "🟢 <b>BOT ATIVADO</b>\n\n"
-            "A fila será processada automaticamente."
+        await query.edit_message_text(
+            (
+                "🦊 <b>RAPOSA CAÇADORA</b>\n\n"
+                "🟢 <b>BOT ATIVADO</b>\n\n"
+                f"⏱️ Intervalo: "
+                f"<b>{INTERVALO_MINUTOS} minutos</b>"
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=teclado_controle(),
         )
 
-        try:
+        logger.info(
+            "Bot ativado pelo administrador."
+        )
 
-            await query.edit_message_text(
-                texto,
-                parse_mode=ParseMode.HTML,
-                reply_markup=teclado_controle(),
-            )
-
-        except Exception as erro:
-
-            logger.warning(
-                "Não foi possível editar mensagem: %s",
-                erro,
-            )
-
-        return
-
-    # --------------------------------------------------------
-    # STOP
-    # --------------------------------------------------------
-
-    if query.data == "bot_stop":
+    elif query.data == "bot_stop":
 
         bot_ativo = False
+
+        await query.edit_message_text(
+            (
+                "🦊 <b>RAPOSA CAÇADORA</b>\n\n"
+                "🔴 <b>BOT PARADO</b>\n\n"
+                "A fila continua salva no Supabase."
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=teclado_controle(),
+        )
 
         logger.info(
             "Bot parado pelo administrador."
         )
-
-        texto = (
-            "🦊 <b>RAPOSA CAÇADORA</b>\n"
-            "\n"
-            "🔴 <b>BOT PARADO</b>\n\n"
-            "Nenhum novo produto será publicado "
-            "até o bot ser iniciado novamente."
-        )
-
-        try:
-
-            await query.edit_message_text(
-                texto,
-                parse_mode=ParseMode.HTML,
-                reply_markup=teclado_controle(),
-            )
-
-        except Exception as erro:
-
-            logger.warning(
-                "Não foi possível editar mensagem: %s",
-                erro,
-            )
-
-        return
 
 
 # ============================================================
@@ -2065,9 +2002,9 @@ async def worker_fila(
 
         try:
 
-            # ------------------------------------------------
-            # BOT PARADO
-            # ------------------------------------------------
+            await asyncio.to_thread(
+                recuperar_processamentos_presos
+            )
 
             if not bot_ativo:
 
@@ -2077,92 +2014,31 @@ async def worker_fila(
 
                 continue
 
-            # ------------------------------------------------
-            # RECUPERAR PROCESSAMENTOS PRESOS
-            # ------------------------------------------------
-
-            await asyncio.to_thread(
-                recuperar_processamentos_presos
-            )
-
-            # ------------------------------------------------
-            # BUSCAR PRÓXIMO PRODUTO
-            # ------------------------------------------------
-
             produto = await asyncio.to_thread(
                 buscar_proximo_produto
             )
 
-            if not produto:
+            if produto:
 
-                logger.info(
-                    "Fila vazia. Nova verificação em 30 segundos."
+                await processar_produto(
+                    bot=bot,
+                    produto_fila=produto,
                 )
 
                 await asyncio.sleep(
-                    30
+                    INTERVALO_MINUTOS * 60
                 )
-
-                continue
-
-            # ------------------------------------------------
-            # PROCESSAR
-            # ------------------------------------------------
-
-            sucesso = await processar_produto(
-                bot=bot,
-                produto_fila=produto,
-            )
-
-            # ------------------------------------------------
-            # INTERVALO ENTRE PUBLICAÇÕES
-            # ------------------------------------------------
-
-            if sucesso:
-
-                logger.info(
-                    "Aguardando %d minutos antes "
-                    "da próxima publicação.",
-                    INTERVALO_MINUTOS,
-                )
-
-                segundos = (
-                    INTERVALO_MINUTOS
-                    * 60
-                )
-
-                for _ in range(
-                    segundos
-                ):
-
-                    if not bot_ativo:
-                        break
-
-                    await asyncio.sleep(
-                        1
-                    )
 
             else:
 
-                # ------------------------------------------------
-                # EM CASO DE ERRO, ESPERA MENOS TEMPO
-                # PARA NÃO TRAVAR A FILA.
-                # ------------------------------------------------
-
-                logger.info(
-                    "Produto apresentou erro. "
-                    "Nova tentativa de processamento da fila "
-                    "em 30 segundos."
-                )
-
                 await asyncio.sleep(
-                    30
+                    10
                 )
 
         except asyncio.CancelledError:
 
             logger.info(
-                "Worker da fila cancelado."
+                "Worker da fila encerrado."
             )
 
             raise
@@ -2180,141 +2056,7 @@ async def worker_fila(
 
 
 # ============================================================
-# COMANDO /INICIAR
-# ============================================================
-
-async def comando_iniciar(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    global bot_ativo
-    global worker_task
-
-    if not usuario_autorizado(update):
-        return
-
-    if update.message is None:
-        return
-
-    bot_ativo = True
-
-    if (
-        worker_task is None
-        or worker_task.done()
-    ):
-
-        worker_task = asyncio.create_task(
-            worker_fila(
-                context.application
-            )
-        )
-
-    await update.message.reply_text(
-        (
-            "🟢 <b>BOT ATIVADO</b>\n\n"
-            "A fila será processada automaticamente."
-        ),
-        parse_mode=ParseMode.HTML,
-        reply_markup=teclado_controle(),
-    )
-
-
-# ============================================================
-# COMANDO /STOP
-# ============================================================
-
-async def comando_stop(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    global bot_ativo
-
-    if not usuario_autorizado(update):
-        return
-
-    if update.message is None:
-        return
-
-    bot_ativo = False
-
-    await update.message.reply_text(
-        (
-            "🔴 <b>BOT PARADO</b>\n\n"
-            "A fila continuará salva no Supabase.\n"
-            "Use /iniciar ou o botão ▶️ INICIAR "
-            "para continuar."
-        ),
-        parse_mode=ParseMode.HTML,
-        reply_markup=teclado_controle(),
-    )
-
-
-# ============================================================
-# COMANDO /ID
-# ============================================================
-
-async def comando_id(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    if update.message is None:
-        return
-
-    user_id = update.effective_user.id
-
-    await update.message.reply_text(
-        (
-            "🆔 Seu Telegram ID é:\n\n"
-            f"<code>{user_id}</code>"
-        ),
-        parse_mode=ParseMode.HTML,
-    )
-
-
-# ============================================================
-# COMANDO /AJUDA
-# ============================================================
-
-async def comando_ajuda(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    if not usuario_autorizado(update):
-        return
-
-    if update.message is None:
-        return
-
-    mensagem = (
-        "🦊 <b>RAPOSA CAÇADORA</b>\n"
-        "\n"
-        "<b>Comandos disponíveis:</b>\n"
-        "\n"
-        "▶️ /iniciar — inicia o processamento\n"
-        "⏹️ /stop — pausa o processamento\n"
-        "📊 /status — mostra o status da fila\n"
-        "📋 /fila — mostra os produtos da fila\n"
-        "❌ /erros — mostra produtos com erro\n"
-        "🆔 /id — mostra seu Telegram ID\n"
-        "/ajuda — mostra esta mensagem\n"
-        "\n"
-        "Você também pode enviar diretamente "
-        "um ou vários links do Mercado Livre."
-    )
-
-    await update.message.reply_text(
-        mensagem,
-        parse_mode=ParseMode.HTML,
-        reply_markup=teclado_controle(),
-    )
-
-
-# ============================================================
-# INICIAR WORKER AUTOMATICAMENTE
+# INICIAR WORKER
 # ============================================================
 
 async def iniciar_worker(
@@ -2328,16 +2070,18 @@ async def iniciar_worker(
         and not worker_task.done()
     ):
 
+        logger.info(
+            "Worker já está executando."
+        )
+
         return
 
     worker_task = asyncio.create_task(
-        worker_fila(
-            application
-        )
+        worker_fila(application)
     )
 
     logger.info(
-        "Worker automático iniciado."
+        "Task do worker criada."
     )
 
 
@@ -2349,33 +2093,8 @@ async def post_init(
     application: Application,
 ):
 
-    logger.info(
-        "Inicializando aplicação Telegram..."
-    )
-
-    await application.bot.set_my_commands(
-        [
-            ("start", "Abrir painel"),
-            ("iniciar", "Iniciar bot"),
-            ("stop", "Parar bot"),
-            ("status", "Ver status"),
-            ("fila", "Ver fila"),
-            ("erros", "Ver erros"),
-            ("id", "Ver Telegram ID"),
-            ("ajuda", "Ver ajuda"),
-        ]
-    )
-
-    await asyncio.to_thread(
-        recuperar_processamentos_presos
-    )
-
     await iniciar_worker(
         application
-    )
-
-    logger.info(
-        "Telegram inicializado."
     )
 
 
@@ -2389,14 +2108,7 @@ async def post_shutdown(
 
     global worker_task
 
-    logger.info(
-        "Encerrando aplicação..."
-    )
-
-    if (
-        worker_task is not None
-        and not worker_task.done()
-    ):
+    if worker_task is not None:
 
         worker_task.cancel()
 
@@ -2408,18 +2120,50 @@ async def post_shutdown(
 
             pass
 
-    worker_task = None
+        worker_task = None
 
     logger.info(
-        "Aplicação encerrada."
+        "Bot encerrado."
     )
 
 
 # ============================================================
-# CONSTRUIR APLICAÇÃO TELEGRAM
+# MAIN
 # ============================================================
 
-def criar_aplicacao():
+def main():
+
+    logger.info(
+        "=========================================="
+    )
+
+    logger.info(
+        "INICIANDO RAPOSA CAÇADORA"
+    )
+
+    logger.info(
+        "=========================================="
+    )
+
+    validar_configuracao()
+
+    iniciar_supabase()
+
+    # --------------------------------------------------------
+    # SERVIDOR HTTP
+    # --------------------------------------------------------
+
+    thread_http = threading.Thread(
+        target=iniciar_servidor_http,
+        daemon=True,
+        name="http-server",
+    )
+
+    thread_http.start()
+
+    # --------------------------------------------------------
+    # TELEGRAM
+    # --------------------------------------------------------
 
     application = (
         Application.builder()
@@ -2437,20 +2181,6 @@ def criar_aplicacao():
         CommandHandler(
             "start",
             comando_start,
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "iniciar",
-            comando_iniciar,
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "stop",
-            comando_stop,
         )
     )
 
@@ -2475,20 +2205,6 @@ def criar_aplicacao():
         )
     )
 
-    application.add_handler(
-        CommandHandler(
-            "id",
-            comando_id,
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "ajuda",
-            comando_ajuda,
-        )
-    )
-
     # --------------------------------------------------------
     # BOTÕES
     # --------------------------------------------------------
@@ -2496,90 +2212,31 @@ def criar_aplicacao():
     application.add_handler(
         CallbackQueryHandler(
             callback_controle,
-            pattern="^bot_(iniciar|stop)$",
         )
     )
 
     # --------------------------------------------------------
-    # MENSAGENS COM TEXTO
+    # LINKS / MENSAGENS
     # --------------------------------------------------------
 
     application.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
+            filters.TEXT
+            & ~filters.COMMAND,
             receber_links,
         )
     )
 
-    # --------------------------------------------------------
-    # MENSAGENS COM LEGENDA
-    # --------------------------------------------------------
-
-    application.add_handler(
-        MessageHandler(
-            filters.PHOTO & filters.CaptionRegex(r"https?://"),
-            receber_links,
-        )
-    )
-
-    return application
-
-
-# ============================================================
-# MAIN
-# ============================================================
-
-def main():
-
     logger.info(
-        "=========================================="
+        "Handlers registrados."
     )
-
-    logger.info(
-        "INICIANDO RAPOSA CAÇADORA"
-    )
-
-    logger.info(
-        "=========================================="
-    )
-
-    # --------------------------------------------------------
-    # VALIDAR CONFIGURAÇÃO
-    # --------------------------------------------------------
-
-    validar_configuracao()
-
-    # --------------------------------------------------------
-    # SUPABASE
-    # --------------------------------------------------------
-
-    iniciar_supabase()
-
-    # --------------------------------------------------------
-    # SERVIDOR HTTP
-    # --------------------------------------------------------
-
-    thread_http = threading.Thread(
-        target=iniciar_servidor_http,
-        name="http-server",
-        daemon=True,
-    )
-
-    thread_http.start()
-
-    # --------------------------------------------------------
-    # TELEGRAM
-    # --------------------------------------------------------
-
-    application = criar_aplicacao()
 
     logger.info(
         "Iniciando polling do Telegram..."
     )
 
     application.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=False,
+        allowed_updates=Update.ALL_TYPES
     )
 
 
@@ -2589,9 +2246,7 @@ def main():
 
 if __name__ == "__main__":
 
-    try:
-
-        main()
+    main()
 
     except KeyboardInterrupt:
 
