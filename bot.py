@@ -29,17 +29,8 @@ from mercadolivre import (
     MercadoLivreAPIError,
 )
 
-# ============================================================
-# OAUTH MERCADO LIVRE
-# ============================================================
-
 import mercadolivre_oauth
 
-from mercadolivre_oauth import (
-    oauth_login_response,
-    oauth_callback_response,
-    oauth_status_response,
-)
 
 # ============================================================
 # CONFIGURAÇÃO
@@ -155,22 +146,16 @@ worker_task: asyncio.Task | None = None
 
 
 # ============================================================
-# SERVIDOR HTTP PARA O RENDER + OAUTH
+# SERVIDOR HTTP
 # ============================================================
 
-class HealthHandler(
-    BaseHTTPRequestHandler
-):
+class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
 
         try:
 
             caminho = self.path
-
-            # ------------------------------------------------
-            # Separar caminho da query string
-            # ------------------------------------------------
 
             if "?" in caminho:
 
@@ -267,7 +252,7 @@ class HealthHandler(
                 return
 
             # ------------------------------------------------
-            # ROTA NÃO ENCONTRADA
+            # NOT FOUND
             # ------------------------------------------------
 
             self._responder(
@@ -369,18 +354,6 @@ def iniciar_servidor_http():
             PORT,
         )
 
-        logger.info(
-            "Health check: /"
-        )
-
-        logger.info(
-            "Mercado Livre OAuth: /mercadolivre/login"
-        )
-
-        logger.info(
-            "Mercado Livre OAuth status: /mercadolivre/status"
-        )
-
         servidor.serve_forever()
 
     except Exception as erro:
@@ -392,7 +365,7 @@ def iniciar_servidor_http():
 
 
 # ============================================================
-# VALIDAÇÃO DA CONFIGURAÇÃO
+# VALIDAÇÃO
 # ============================================================
 
 def validar_configuracao():
@@ -423,10 +396,6 @@ def validar_configuracao():
         erros.append(
             "SUPABASE_KEY não configurada."
         )
-
-    # --------------------------------------------------------
-    # OAUTH MERCADO LIVRE
-    # --------------------------------------------------------
 
     oauth_client_id = os.getenv(
         "MERCADOLIVRE_CLIENT_ID",
@@ -479,6 +448,12 @@ def validar_configuracao():
             "INTERVALO_MINUTOS deve ser maior que 0."
         )
 
+    if PORT < 1 or PORT > 65535:
+
+        erros.append(
+            "PORT inválida."
+        )
+
     if erros:
 
         for erro in erros:
@@ -517,10 +492,6 @@ def validar_configuracao():
         PORT,
     )
 
-    logger.info(
-        "OAuth Mercado Livre configurado."
-    )
-
 
 # ============================================================
 # AUTORIZAÇÃO
@@ -550,7 +521,7 @@ def usuario_autorizado(
 
 
 # ============================================================
-# EXTRAIR LINKS DO MERCADO LIVRE
+# EXTRAIR LINKS
 # ============================================================
 
 def extrair_links(
@@ -693,7 +664,7 @@ def inserir_links(
 
 
 # ============================================================
-# SUPABASE - BUSCAR PRÓXIMO PRODUTO
+# SUPABASE - PRÓXIMO PRODUTO
 # ============================================================
 
 def buscar_proximo_produto():
@@ -722,7 +693,7 @@ def buscar_proximo_produto():
 
 
 # ============================================================
-# SUPABASE - MARCAR PROCESSANDO
+# SUPABASE - PROCESSANDO
 # ============================================================
 
 def marcar_processando(
@@ -757,7 +728,7 @@ def marcar_processando(
 
 
 # ============================================================
-# SUPABASE - MARCAR PUBLICADO
+# SUPABASE - PUBLICADO
 # ============================================================
 
 def marcar_publicado(
@@ -774,13 +745,10 @@ def marcar_publicado(
     ).isoformat()
 
     dados = {
-
         "status": "published",
 
         "product_name": (
-            produto.get(
-                "productName"
-            )
+            produto.get("productName")
             or "Produto"
         ),
 
@@ -821,7 +789,7 @@ def marcar_publicado(
 
 
 # ============================================================
-# SUPABASE - MARCAR ERRO
+# SUPABASE - ERRO
 # ============================================================
 
 def marcar_erro(
@@ -832,47 +800,55 @@ def marcar_erro(
     if supabase is None:
         return
 
-    resposta = (
-        supabase
-        .table("produtos_fila")
-        .select("tentativas")
-        .eq("id", produto_id)
-        .limit(1)
-        .execute()
-    )
+    try:
 
-    tentativas = 0
+        resposta = (
+            supabase
+            .table("produtos_fila")
+            .select("tentativas")
+            .eq("id", produto_id)
+            .limit(1)
+            .execute()
+        )
 
-    if resposta.data:
+        tentativas = 0
 
-        tentativas = int(
-            resposta.data[0].get(
-                "tentativas",
-                0,
+        if resposta.data:
+
+            tentativas = int(
+                resposta.data[0].get(
+                    "tentativas",
+                    0,
+                )
+                or 0
             )
-            or 0
+
+        tentativas += 1
+
+        (
+            supabase
+            .table("produtos_fila")
+            .update(
+                {
+                    "status": "error",
+                    "tentativas": tentativas,
+                    "erro": erro[:2000],
+                    "processing_at": None,
+                }
+            )
+            .eq("id", produto_id)
+            .execute()
         )
 
-    tentativas += 1
+    except Exception:
 
-    (
-        supabase
-        .table("produtos_fila")
-        .update(
-            {
-                "status": "error",
-                "tentativas": tentativas,
-                "erro": erro[:2000],
-                "processing_at": None,
-            }
+        logger.exception(
+            "Falha ao marcar produto como erro."
         )
-        .eq("id", produto_id)
-        .execute()
-    )
 
 
 # ============================================================
-# SUPABASE - RECUPERAR PROCESSAMENTOS PRESOS
+# RECUPERAR PROCESSAMENTOS PRESOS
 # ============================================================
 
 def recuperar_processamentos_presos():
@@ -1176,7 +1152,7 @@ async def publicar_produto(
             )
 
             logger.info(
-                "Produto publicado com imagem e botão."
+                "Produto publicado com imagem."
             )
 
             return (
@@ -1204,7 +1180,7 @@ async def publicar_produto(
         )
 
         logger.info(
-            "Produto publicado somente como texto."
+            "Produto publicado como texto."
         )
 
         return (
@@ -1226,7 +1202,7 @@ async def publicar_produto(
 
 
 # ============================================================
-# NOTIFICAÇÃO PARA ADMIN
+# NOTIFICAÇÃO ADMIN
 # ============================================================
 
 async def enviar_notificacao_admin(
@@ -1237,7 +1213,9 @@ async def enviar_notificacao_admin(
     try:
 
         await bot.send_message(
-            chat_id=int(TELEGRAM_ADMIN_ID),
+            chat_id=int(
+                TELEGRAM_ADMIN_ID
+            ),
             text=texto,
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
@@ -1246,7 +1224,7 @@ async def enviar_notificacao_admin(
     except Exception as erro:
 
         logger.warning(
-            "Não foi possível notificar admin: %s",
+            "Falha ao notificar admin: %s",
             erro,
         )
 
@@ -1264,21 +1242,9 @@ async def processar_produto(
     link = produto_fila["link"]
 
     logger.info(
-        "=========================================="
-    )
-
-    logger.info(
         "Processando produto ID %s",
         produto_id,
     )
-
-    logger.info(
-        "Link recebido para processamento."
-    )
-
-    # ========================================================
-    # RESERVAR PRODUTO
-    # ========================================================
 
     reservado = await asyncio.to_thread(
         marcar_processando,
@@ -1295,10 +1261,6 @@ async def processar_produto(
         return False
 
     try:
-
-        # ====================================================
-        # BUSCAR PRODUTO
-        # ====================================================
 
         produto = await asyncio.to_thread(
             buscar_produto_por_link,
@@ -1319,10 +1281,6 @@ async def processar_produto(
             ),
         )
 
-        # ====================================================
-        # PUBLICAR
-        # ====================================================
-
         sucesso, message_id = (
             await publicar_produto(
                 bot=bot,
@@ -1337,25 +1295,12 @@ async def processar_produto(
                 "Falha ao publicar no Telegram."
             )
 
-        # ====================================================
-        # MARCAR PUBLICADO
-        # ====================================================
-
         await asyncio.to_thread(
             marcar_publicado,
             produto_id,
             produto,
             message_id,
         )
-
-        logger.info(
-            "Produto %s marcado como publicado.",
-            produto_id,
-        )
-
-        # ====================================================
-        # ADMIN
-        # ====================================================
 
         await enviar_notificacao_admin(
             bot,
@@ -1374,7 +1319,7 @@ async def processar_produto(
     except MercadoLivreAPIError as erro:
 
         logger.error(
-            "Erro do Mercado Livre: %s",
+            "Erro Mercado Livre: %s",
             erro,
         )
 
@@ -1423,7 +1368,7 @@ async def processar_produto(
 
 
 # ============================================================
-# TECLADO PRINCIPAL
+# TECLADO
 # ============================================================
 
 def teclado_controle():
@@ -1468,10 +1413,9 @@ async def comando_start(
         f"📦 Máximo por envio: <b>{MAX_LINKS_POR_ENVIO}</b>\n"
         f"⏱️ Intervalo: <b>{INTERVALO_MINUTOS} minutos</b>\n"
         "\n"
-        "O bot salva tudo no Supabase, então "
-        "a fila continua mesmo se o Render reiniciar.\n"
+        "A fila é salva no Supabase.\n"
         "\n"
-        "Use os botões abaixo para controlar a publicação."
+        "Use os botões abaixo para controlar o bot."
     )
 
     await update.message.reply_text(
@@ -1553,8 +1497,10 @@ async def comando_status(
 
         worker_estado = (
             "🟢 EXECUTANDO"
-            if worker_task is not None
-            and not worker_task.done()
+            if (
+                worker_task is not None
+                and not worker_task.done()
+            )
             else "🔴 PARADO"
         )
 
@@ -1571,7 +1517,8 @@ async def comando_status(
             f"🔄 Processando: <b>{processando}</b>\n"
             f"❌ Erros: <b>{erros}</b>\n"
             "\n"
-            f"⏱️ Intervalo: <b>{INTERVALO_MINUTOS} minutos</b>"
+            f"⏱️ Intervalo: "
+            f"<b>{INTERVALO_MINUTOS} minutos</b>"
         )
 
         await update.message.reply_text(
@@ -1583,7 +1530,7 @@ async def comando_status(
     except Exception as erro:
 
         logger.exception(
-            "Erro no comando /status"
+            "Erro no comando /status."
         )
 
         await update.message.reply_text(
@@ -1617,7 +1564,10 @@ async def comando_fila(
             .select(
                 "id,link,product_name,status,created_at"
             )
-            .order("id", desc=False)
+            .order(
+                "id",
+                desc=False,
+            )
             .limit(100)
             .execute()
         )
@@ -1691,7 +1641,7 @@ async def comando_fila(
     except Exception as erro:
 
         logger.exception(
-            "Erro no comando /fila"
+            "Erro no comando /fila."
         )
 
         await update.message.reply_text(
@@ -1725,8 +1675,14 @@ async def comando_erros(
             .select(
                 "id,link,erro,tentativas"
             )
-            .eq("status", "error")
-            .order("id", desc=False)
+            .eq(
+                "status",
+                "error",
+            )
+            .order(
+                "id",
+                desc=False,
+            )
             .limit(20)
             .execute()
         )
@@ -1763,46 +1719,10 @@ async def comando_erros(
                     + "..."
                 )
 
-            linhas
-                    for item in registros:
-
-            erro = (
-                item.get("erro")
-                or "Erro desconhecido"
-            )
-
-            if len(erro) > 300:
-
-                erro = (
-                    erro[:297]
-                    + "..."
+            tentativas = inteiro(
+                item.get(
+                    "tentativas"
                 )
-
-            tentativas = inteiro(
-                item.get("tentativas")
-            )
-
-            linhas.append(
-                f"❌ <b>#{item['id']}</b> "
-                f"— Tentativas: <b>{tentativas}</b>\n"
-                f"⚠️ {erro}"
-            )
-
-        texto = "\n\n".join(
-        )
-
-                for item in registros:
-
-            erro = (
-                item.get("erro")
-                or "Erro desconhecido"
-            )
-
-            if len(erro) > 300:
-                erro = erro[:297] + "..."
-
-            tentativas = inteiro(
-                item.get("tentativas")
             )
 
             linhas.append(
@@ -1811,10 +1731,16 @@ async def comando_erros(
                 f"⚠️ {erro}\n"
             )
 
-        texto = "\n".join(linhas)
+        texto = "\n".join(
+            linhas
+        )
 
         if len(texto) > 4000:
-            texto = texto[:3950] + "\n\n..."
+
+            texto = (
+                texto[:3950]
+                + "\n\n..."
+            )
 
         await update.message.reply_text(
             texto,
@@ -1824,7 +1750,7 @@ async def comando_erros(
     except Exception as erro:
 
         logger.exception(
-            "Erro no comando /erros"
+            "Erro no comando /erros."
         )
 
         await update.message.reply_text(
@@ -1849,7 +1775,9 @@ async def receber_links(
 
     texto = update.message.text or ""
 
-    links = extrair_links(texto)
+    links = extrair_links(
+        texto
+    )
 
     if not links:
 
@@ -1924,7 +1852,7 @@ async def receber_links(
 
 
 # ============================================================
-# BOTÃO INICIAR / STOP
+# CALLBACK DOS BOTÕES
 # ============================================================
 
 async def callback_controle(
@@ -1950,8 +1878,10 @@ async def callback_controle(
 
         await query.edit_message_text(
             (
-                "🦊 <b>RAPOSA CAÇADORA</b>\n\n"
-                "🟢 <b>BOT ATIVADO</b>\n\n"
+                "🦊 <b>RAPOSA CAÇADORA</b>\n"
+                "\n"
+                "🟢 <b>BOT ATIVADO</b>\n"
+                "\n"
                 f"⏱️ Intervalo: "
                 f"<b>{INTERVALO_MINUTOS} minutos</b>"
             ),
@@ -1969,8 +1899,10 @@ async def callback_controle(
 
         await query.edit_message_text(
             (
-                "🦊 <b>RAPOSA CAÇADORA</b>\n\n"
-                "🔴 <b>BOT PARADO</b>\n\n"
+                "🦊 <b>RAPOSA CAÇADORA</b>\n"
+                "\n"
+                "🔴 <b>BOT PARADO</b>\n"
+                "\n"
                 "A fila continua salva no Supabase."
             ),
             parse_mode=ParseMode.HTML,
@@ -1983,7 +1915,7 @@ async def callback_controle(
 
 
 # ============================================================
-# WORKER DA FILA
+# WORKER
 # ============================================================
 
 async def worker_fila(
@@ -2020,14 +1952,27 @@ async def worker_fila(
 
             if produto:
 
-                await processar_produto(
+                sucesso = await processar_produto(
                     bot=bot,
                     produto_fila=produto,
                 )
 
-                await asyncio.sleep(
-                    INTERVALO_MINUTOS * 60
-                )
+                if sucesso:
+
+                    logger.info(
+                        "Aguardando %d minutos para próximo produto.",
+                        INTERVALO_MINUTOS,
+                    )
+
+                    await asyncio.sleep(
+                        INTERVALO_MINUTOS * 60
+                    )
+
+                else:
+
+                    await asyncio.sleep(
+                        30
+                    )
 
             else:
 
@@ -2038,7 +1983,7 @@ async def worker_fila(
         except asyncio.CancelledError:
 
             logger.info(
-                "Worker da fila encerrado."
+                "Worker encerrado."
             )
 
             raise
@@ -2056,10 +2001,10 @@ async def worker_fila(
 
 
 # ============================================================
-# INICIAR WORKER
+# POST INIT
 # ============================================================
 
-async def iniciar_worker(
+async def post_init(
     application: Application,
 ):
 
@@ -2077,24 +2022,13 @@ async def iniciar_worker(
         return
 
     worker_task = asyncio.create_task(
-        worker_fila(application)
+        worker_fila(
+            application
+        )
     )
 
     logger.info(
-        "Task do worker criada."
-    )
-
-
-# ============================================================
-# POST INIT
-# ============================================================
-
-async def post_init(
-    application: Application,
-):
-
-    await iniciar_worker(
-        application
+        "Worker criado."
     )
 
 
@@ -2145,7 +2079,15 @@ def main():
         "=========================================="
     )
 
+    # --------------------------------------------------------
+    # CONFIGURAÇÃO
+    # --------------------------------------------------------
+
     validar_configuracao()
+
+    # --------------------------------------------------------
+    # SUPABASE
+    # --------------------------------------------------------
 
     iniciar_supabase()
 
@@ -2211,12 +2153,12 @@ def main():
 
     application.add_handler(
         CallbackQueryHandler(
-            callback_controle,
+            callback_controle
         )
     )
 
     # --------------------------------------------------------
-    # LINKS / MENSAGENS
+    # MENSAGENS COM LINKS
     # --------------------------------------------------------
 
     application.add_handler(
@@ -2235,6 +2177,10 @@ def main():
         "Iniciando polling do Telegram..."
     )
 
+    # --------------------------------------------------------
+    # POLLING
+    # --------------------------------------------------------
+
     application.run_polling(
         allowed_updates=Update.ALL_TYPES
     )
@@ -2247,18 +2193,3 @@ def main():
 if __name__ == "__main__":
 
     main()
-
-    except KeyboardInterrupt:
-
-        logger.info(
-            "Aplicação interrompida pelo usuário."
-        )
-
-    except Exception as erro:
-
-        logger.exception(
-            "Erro fatal na aplicação: %s",
-            erro,
-        )
-
-        raise
