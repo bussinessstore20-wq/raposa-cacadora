@@ -3,30 +3,21 @@ services:
     name: raposa-cacadora
     runtime: python
 
-    buildCommand: pip install -r requirements.txt && PLAYWRIGHT_BROWSERS_PATH=/opt/render/.cache/ms-playwright playwright install chromium
+    buildCommand: pip install -r requirements.txt
 
     startCommand: python bot.py
 
     envVars:
-      - key: PLAYWRIGHT_BROWSERS_PATH
-        value: /opt/render/.cache/ms-playwright
-
       - key: TELEGRAM_TOKEN
         sync: false
 
       - key: TELEGRAM_CHAT_ID
         sync: false
 
-      - key: TELEGRAM_ADMIN_ID
+      - key: SHOPEE_APP_ID
         sync: false
 
-      - key: SUPABASE_URL
-        sync: false
-
-      - key: SUPABASE_KEY
-        sync: false
-
-      - key: MERCADOLIVRE_ACCESS_TOKEN
+      - key: SHOPEE_SECRET
         sync: false
 
       - key: PRODUTOS_POR_CICLO
@@ -46,4 +37,3 @@ services:
 
       - key: COMISSAO_MINIMA
         value: "0"
-        
