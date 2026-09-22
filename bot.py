@@ -1605,6 +1605,8 @@ async def comando_iniciar(
         ),
         parse_mode=ParseMode.HTML,
         reply_markup=teclado_controle(),
+    )
+    
 # ============================================================
 # /INICIAR
 # ============================================================
