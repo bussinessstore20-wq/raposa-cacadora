@@ -228,11 +228,18 @@ def processar_webhook_manus(
         stop_reason = detail.get("stop_reason")
         if stop_reason == "finish":
             try:
-                messages = listar_mensagens_tarefa(task_id)
-                resultado = _montar_resultado_manus(messages)
+                structured = detail.get("structured_output") or {}
+                if not structured.get("success", False):
+                    raise ManusAPIError(
+                        structured.get("error") or "Manus não retornou structured output."
+                    )
+                value = structured.get("value") or {}
                 supabase.table("instagram_posts").update({
                     "status": "ready",
-                    "manus_result": resultado,
+                    "category": value.get("category"),
+                    "caption": value.get("caption"),
+                    "assets": value.get("slides"),
+                    "manus_result": structured,
                     "updated_at": _agora(),
                 }).eq("id", post_id).execute()
                 return True, "lote pronto"
