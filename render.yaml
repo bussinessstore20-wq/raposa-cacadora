@@ -1,5 +1,5 @@
 services:
-  - type: worker
+  - type: web
     name: raposa-cacadora
     runtime: python
 
@@ -38,20 +38,3 @@ services:
       - key: COMISSAO_MINIMA
         value: "0"
 
-
-  - type: web
-    name: raposa-cacadora-web
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python web.py
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_KEY
-        sync: false
-      - key: MANUS_API_KEY
-        sync: false
-      - key: MANUS_WEBHOOK_PUBLIC_KEY
-        sync: false
-      - key: MANUS_API_URL
-        value: https://api.manus.ai
