@@ -1,0 +1,1 @@
+Deploy refresh after Web App integration. No runtime configuration changes.
