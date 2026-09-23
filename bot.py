@@ -1591,6 +1591,7 @@ async def comando_fila(
             .select(
                 "id,link,product_name,status,created_at"
             )
+            .eq("fila_origem", FILA_ORIGEM)
             .order("id", desc=False)
             .limit(100)
             .execute()
@@ -1696,6 +1697,7 @@ async def comando_erros(
             .select(
                 "id,link,erro,tentativas"
             )
+            .eq("fila_origem", FILA_ORIGEM)
             .eq("status", "error")
             .order("id", desc=False)
             .limit(20)
@@ -1802,6 +1804,7 @@ async def comando_retry(
                     "processing_at": None,
                 }
             )
+            .eq("fila_origem", FILA_ORIGEM)
             .eq("status", "error")
             .execute()
         )
