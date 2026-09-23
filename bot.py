@@ -203,6 +203,7 @@ class HealthHandler(
                     .in_("id", ids)
                     .eq("fila_origem", FILA_ORIGEM)
                     .execute()
+                )
                 dados = dados.data
                 estados = {str(item["id"]): item.get("status") for item in dados}
                 concluidos = sum(1 for s in estados.values() if s == "published")
