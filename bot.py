@@ -7,6 +7,7 @@ import logging
 import os
 import threading
 import time
+import requests
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -230,16 +231,93 @@ class HealthHandler(
         return
 
 
+MANUS_PUBLIC_KEY_CACHE = ""
+MANUS_PUBLIC_KEY_CACHE_AT = 0.0
+MANUS_PUBLIC_KEY_CACHE_TTL = 3600
+
+
+def obter_chave_publica_manus():
+    global MANUS_PUBLIC_KEY_CACHE
+    global MANUS_PUBLIC_KEY_CACHE_AT
+
+    configured_key = os.getenv(
+        "MANUS_WEBHOOK_PUBLIC_KEY",
+        "",
+    ).strip()
+
+    if configured_key:
+        if "\\n" in configured_key:
+            configured_key = configured_key.replace("\\n", "\n")
+        return configured_key
+
+    agora = time.time()
+
+    if (
+        MANUS_PUBLIC_KEY_CACHE
+        and agora - MANUS_PUBLIC_KEY_CACHE_AT < MANUS_PUBLIC_KEY_CACHE_TTL
+    ):
+        return MANUS_PUBLIC_KEY_CACHE
+
+    api_url = os.getenv(
+        "MANUS_API_URL",
+        "https://api.manus.ai",
+    ).rstrip("/")
+    api_key = os.getenv(
+        "MANUS_API_KEY",
+        "",
+    ).strip()
+
+    if not api_key:
+        logger.error(
+            "MANUS_API_KEY não configurada; não é possível obter a chave pública."
+        )
+        return ""
+
+    try:
+        resposta = requests.get(
+            f"{api_url}/v2/webhook.publicKey",
+            headers={"x-manus-api-key": api_key},
+            timeout=15,
+        )
+        resposta.raise_for_status()
+
+        dados = resposta.json()
+        public_key = str(
+            dados.get("public_key", "")
+        ).strip()
+
+        if not public_key:
+            raise RuntimeError(
+                "Manus não retornou public_key."
+            )
+
+        if "\\n" in public_key:
+            public_key = public_key.replace("\\n", "\n")
+
+        MANUS_PUBLIC_KEY_CACHE = public_key
+        MANUS_PUBLIC_KEY_CACHE_AT = agora
+
+        logger.info(
+            "Chave pública do Manus obtida e armazenada em cache."
+        )
+
+        return public_key
+
+    except Exception as erro:
+        logger.exception(
+            "Erro ao obter chave pública do Manus: %s",
+            erro,
+        )
+        return ""
+
+
 def verificar_assinatura_manus(
     body,
     signature,
     timestamp,
     request_url,
 ):
-    public_key = os.getenv(
-        "MANUS_WEBHOOK_PUBLIC_KEY",
-        "",
-    ).strip()
+    public_key = obter_chave_publica_manus()
 
     if not public_key or not signature or not timestamp:
         return False
@@ -248,9 +326,6 @@ def verificar_assinatura_manus(
         ts = int(timestamp)
         if abs(int(time.time()) - ts) > 300:
             return False
-
-        if "\\n" in public_key:
-            public_key = public_key.replace("\\n", "\n")
 
         body_hash = hashlib.sha256(body).hexdigest()
         signed_content = (
