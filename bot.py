@@ -30,6 +30,12 @@ from shopee import (
     ShopeeAPIError,
 )
 
+from instagram_pipeline import (
+    criar_lote_instagram,
+    registrar_produto_processado,
+    processar_lote_se_pronto,
+)
+
 
 # ============================================================
 # CONFIGURAÇÃO
@@ -370,6 +376,7 @@ def inserir_links(
     adicionados = 0
     duplicados = 0
     erros = []
+    ids_inseridos = []
 
     for link in links:
 
@@ -389,6 +396,7 @@ def inserir_links(
 
             if resposta.data:
                 adicionados += 1
+                ids_inseridos.append(int(resposta.data[0]["id"]))
 
         except Exception as erro:
 
@@ -424,6 +432,7 @@ def inserir_links(
         adicionados,
         duplicados,
         erros,
+        ids_inseridos,
     )
 
 
@@ -1044,6 +1053,22 @@ async def processar_produto(
             produto,
             message_id,
         )
+
+        try:
+            post_ids = await asyncio.to_thread(
+                registrar_produto_processado,
+                supabase,
+                produto_id,
+                produto,
+            )
+            for post_id in post_ids:
+                await asyncio.to_thread(
+                    processar_lote_se_pronto,
+                    supabase,
+                    post_id,
+                )
+        except Exception:
+            logger.exception("Erro ao atualizar pipeline Instagram.")
 
         logger.info(
             "Produto %s marcado como publicado.",
@@ -1788,6 +1813,7 @@ async def receber_links(
             adicionados,
             duplicados,
             erros,
+            ids_inseridos,
         ) = await asyncio.to_thread(
             inserir_links,
             links,
@@ -1824,6 +1850,19 @@ async def receber_links(
             parse_mode=ParseMode.HTML,
             reply_markup=teclado_controle(),
         )
+
+        if ids_inseridos and len(ids_inseridos) >= 2:
+
+            try:
+                await asyncio.to_thread(
+                    criar_lote_instagram,
+                    supabase,
+                    ids_inseridos,
+                    str(update.effective_chat.id) if update.effective_chat else None,
+                    update.message.message_id,
+                )
+            except Exception:
+                logger.exception("Erro ao criar lote Instagram.")
 
         if erros:
 
