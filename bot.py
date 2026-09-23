@@ -2,6 +2,8 @@
 import asyncio
 import base64
 import hashlib
+import hmac
+import urllib.parse
 import json
 import logging
 import os
@@ -10,6 +12,7 @@ import time
 import requests
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 from supabase import create_client, Client
@@ -160,74 +163,134 @@ class HealthHandler(
     BaseHTTPRequestHandler
 ):
 
-    def do_GET(self):
-        path = self.path.split("?", 1)[0]
-        if path.rstrip("/") not in ("/", "/webhook/manus"):
-            self.send_response(404)
-            self.end_headers()
-            return
-        self.send_response(200)
-        self.send_header(
-            "Content-Type",
-            "text/plain; charset=utf-8",
-        )
-        self.end_headers()
-        self.wfile.write(b"Raposa Cacadora OK")
-
-    def do_POST(self):
-        path = self.path.split("?", 1)[0]
-        if path.rstrip("/") != "/webhook/manus":
-            self.send_response(404)
-            self.end_headers()
-            return
-
-        length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length)
-        signature = self.headers.get("X-Webhook-Signature", "")
-        timestamp = self.headers.get("X-Webhook-Timestamp", "")
-
-        if not verificar_assinatura_manus(
-            body,
-            signature,
-            timestamp,
-            f"https://{self.headers.get('Host', '')}{self.path}",
-        ):
-            self._send_json(401, {"ok": False, "error": "invalid_signature"})
-            return
-
-        try:
-            payload = json.loads(body.decode("utf-8"))
-            ok, message = processar_webhook_manus(supabase, payload)
-            self._send_json(
-                200 if ok else 500,
-                {"ok": ok, "message": message},
-            )
-        except Exception as erro:
-            logger.exception("Erro no webhook Manus: %s", erro)
-            self._send_json(500, {"ok": False, "error": "internal_error"})
-
-    def _send_json(self, status, payload):
-        encoded = json.dumps(
-            payload,
-            ensure_ascii=False,
-        ).encode("utf-8")
+    def _json_body(self, status, payload):
+        encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
-        self.send_header(
-            "Content-Type",
-            "application/json; charset=utf-8",
-        )
-        self.send_header(
-            "Content-Length",
-            str(len(encoded)),
-        )
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
 
-    def log_message(
-        self,
-        format,
-        *args,
-    ):
+    def do_GET(self):
+        path = self.path.split("?", 1)[0]
+
+        if path in ("", "/"):
+            try:
+                arquivo = Path(__file__).parent / "templates" / "index.html"
+                conteudo = arquivo.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(conteudo)))
+                self.end_headers()
+                self.wfile.write(conteudo)
+            except Exception as erro:
+                logger.exception("Erro ao servir Web App: %s", erro)
+                self.send_response(500)
+                self.end_headers()
+            return
+
+        if path == "/api/status":
+            try:
+                params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                raw_ids = params.get("ids", [""])[0]
+                ids = [int(x) for x in raw_ids.split(",") if x.strip().isdigit()]
+                if not ids:
+                    self._json_body(400, {"ok": False, "error": "ids_required"})
+                    return
+                dados = (
+                    supabase.table("produtos_fila")
+                    .select("id,status")
+                    .in_("id", ids)
+                    .eq("fila_origem", FILA_ORIGEM)
+                    .execute().data
+                estados = {str(item["id"]): item.get("status") for item in dados}
+                concluidos = sum(1 for s in estados.values() if s == "published")
+                erros = sum(1 for s in estados.values() if s == "error")
+                pendentes = sum(1 for s in estados.values() if s in ("pending", "processing"))
+                status = "concluida" if concluidos + erros >= len(ids) else "processando"
+                self._json_body(200, {
+                    "ok": True, "status": status, "total": len(ids),
+                    "concluidos": concluidos, "pendentes": pendentes,
+                    "erros": erros, "items": estados,
+                })
+            except Exception as erro:
+                logger.exception("Erro no status do Web App: %s", erro)
+                self._json_body(500, {"ok": False, "error": "internal_error"})
+            return
+
+        if path == "/webhook/manus":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Raposa Cacadora OK")
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self):
+        path = self.path.split("?", 1)[0]
+
+        if path == "/webhook/manus":
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            signature = self.headers.get("X-Webhook-Signature", "")
+            timestamp = self.headers.get("X-Webhook-Timestamp", "")
+            if not verificar_assinatura_manus(body, signature, timestamp,
+                                              f"https://{self.headers.get('Host', '')}{self.path}"):
+                self._json_body(401, {"ok": False, "error": "invalid_signature"})
+                return
+            try:
+                payload = json.loads(body.decode("utf-8"))
+                ok, message = processar_webhook_manus(supabase, payload)
+                self._json_body(200 if ok else 500, {"ok": ok, "message": message})
+            except Exception as erro:
+                logger.exception("Erro no webhook Manus: %s", erro)
+                self._json_body(500, {"ok": False, "error": "internal_error"})
+            return
+
+        if path == "/api/configurar":
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            try:
+                dados = json.loads(body.decode("utf-8"))
+                init_data = str(dados.get("initData") or "")
+                if not validar_telegram_webapp(init_data):
+                    self._json_body(401, {"ok": False, "error": "telegram_auth_invalid"})
+                    return
+                user = extrair_usuario_webapp(init_data)
+                if not user or int(user.get("id", 0)) != int(TELEGRAM_ADMIN_ID):
+                    self._json_body(403, {"ok": False, "error": "usuario_nao_autorizado"})
+                    return
+                links = dados.get("links") or []
+                links = extrair_links(" ".join(str(link) for link in links))
+                if not links:
+                    self._json_body(400, {"ok": False, "error": "nenhum_link_shopee"})
+                    return
+                if len(links) > MAX_LINKS_POR_ENVIO:
+                    self._json_body(400, {"ok": False, "error": "limite_20_links"})
+                    return
+                adicionados, duplicados, erros, ids = inserir_links(links)
+                if ids and len(ids) >= 2:
+                    try:
+                        criar_lote_instagram(supabase, ids, str(user["id"]), None)
+                    except Exception:
+                        logger.exception("Erro ao criar lote Instagram via Web App.")
+                self._json_body(200, {
+                    "ok": True,
+                    "mensagem": f"{adicionados} produto(s) adicionado(s) à fila.",
+                    "task_id": ",".join(str(x) for x in ids),
+                    "ids": ids, "adicionados": adicionados,
+                    "duplicados": duplicados, "erros": len(erros),
+                })
+            except Exception as erro:
+                logger.exception("Erro no /api/configurar: %s", erro)
+                self._json_body(500, {"ok": False, "error": "internal_error"})
+            return
+
+        self._json_body(404, {"ok": False, "error": "not_found"})
+
+    def log_message(self, format, *args):
         return
 
 
@@ -444,6 +507,36 @@ def validar_configuracao():
         "Porta HTTP: %d",
         PORT,
     )
+
+
+# ============================================================
+# TELEGRAM WEB APP
+# ============================================================
+
+def validar_telegram_webapp(init_data: str) -> bool:
+    if not init_data or not TELEGRAM_TOKEN:
+        return False
+    try:
+        params = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+        recebido = params.pop("hash", "")
+        if not recebido:
+            return False
+        data_check_string = "\\n".join(f"{k}={params[k]}" for k in sorted(params))
+        secret_key = hmac.new(b"WebAppData", TELEGRAM_TOKEN.encode("utf-8"), hashlib.sha256).digest()
+        calculado = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(calculado, recebido)
+    except Exception:
+        logger.exception("Erro validando Telegram Web App.")
+        return False
+
+
+def extrair_usuario_webapp(init_data: str) -> dict | None:
+    try:
+        params = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+        usuario = params.get("user")
+        return json.loads(usuario) if usuario else None
+    except Exception:
+        return None
 
 
 # ============================================================
