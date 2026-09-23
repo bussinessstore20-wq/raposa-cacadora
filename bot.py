@@ -1,8 +1,12 @@
 
 import asyncio
+import base64
+import hashlib
+import json
 import logging
 import os
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -156,6 +160,11 @@ class HealthHandler(
 ):
 
     def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path.rstrip("/") not in ("/", "/webhook/manus"):
+            self.send_response(404)
+            self.end_headers()
+            return
         self.send_response(200)
         self.send_header(
             "Content-Type",
