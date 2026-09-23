@@ -91,7 +91,7 @@ PORT = int(
 )
 
 MAX_LINKS_POR_ENVIO = 20
-
+FILA_ORIGEM = "raposa-cacadora-bot"
 
 # ============================================================
 # LOG
@@ -563,6 +563,7 @@ def inserir_links(
                     {
                         "link": link,
                         "status": "pending",
+                        "fila_origem": FILA_ORIGEM,
                     }
                 )
                 .execute()
@@ -626,6 +627,7 @@ def buscar_proximo_produto():
         .table("produtos_fila")
         .select("*")
         .eq("status", "pending")
+        .eq("fila_origem", FILA_ORIGEM)
         .order("created_at", desc=False)
         .limit(1)
         .execute()
