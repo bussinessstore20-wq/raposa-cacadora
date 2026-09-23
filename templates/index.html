@@ -292,7 +292,7 @@
 
     .intervals {
       display: grid;
-      grid-template-columns: repeat(4,1fr);
+      grid-template-columns: 1fr;
       gap: 5px;
       margin-top: 8px;
     }
@@ -588,37 +588,11 @@
         <button
           type="button"
           class="interval active"
-          data-segundos="10"
+          data-segundos="1200"
+          aria-label="Intervalo de 20 minutos"
         >
-          <strong>10s</strong>
-          <small>rápido</small>
-        </button>
-
-        <button
-          type="button"
-          class="interval"
-          data-segundos="60"
-        >
-          <strong>1 min</strong>
-          <small>normal</small>
-        </button>
-
-        <button
-          type="button"
-          class="interval"
-          data-segundos="300"
-        >
-          <strong>5 min</strong>
-          <small>moderado</small>
-        </button>
-
-        <button
-          type="button"
-          class="interval"
-          data-segundos="600"
-        >
-          <strong>10 min</strong>
-          <small>lento</small>
+          <strong>20 min</strong>
+          <small>intervalo fixo</small>
         </button>
 
       </div>
@@ -776,7 +750,7 @@
 
   const MAX_LINKS = 20;
 
-  let intervaloSelecionado = 10;
+  let intervaloSelecionado = 1200;
   let quantidade = 1;
 
 
