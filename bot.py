@@ -91,7 +91,7 @@ PORT = int(
 )
 
 MAX_LINKS_POR_ENVIO = 20
-FILA_ORIGEM = "raposa-cacadora-bot"
+FILA_ORIGEM = "raposa-cacadora"
 
 # ============================================================
 # LOG
