@@ -1809,40 +1809,6 @@ async def comando_iniciar(
     )
     
 # ============================================================
-# /INICIAR
-# ============================================================
-
-async def comando_iniciar(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    global bot_ativo
-
-    if not usuario_autorizado(update):
-        return
-
-    bot_ativo = True
-
-    logger.info(
-        "Publicação iniciada pelo administrador."
-    )
-
-    await update.message.reply_text(
-        (
-            "▶️ <b>PUBLICAÇÃO INICIADA</b>\n"
-            "\n"
-            "A Raposa Caçadora voltou a processar "
-            "a fila do Supabase.\n"
-            "\n"
-            f"⏱️ Intervalo: <b>{INTERVALO_MINUTOS} minutos</b>"
-        ),
-        parse_mode=ParseMode.HTML,
-        reply_markup=teclado_controle(),
-    )
-
-
-# ============================================================
 # BOTÕES
 # ============================================================
 
