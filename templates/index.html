@@ -1,0 +1,1849 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+  >
+
+  <title>Raposa Caçadora PRO</title>
+
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+  >
+
+  <style>
+    :root {
+      --orange: #ff6b00;
+      --orange2: #ff934d;
+      --bg: #070707;
+      --card: #111113;
+      --card2: #171719;
+      --input: #1c1c1f;
+      --white: #fff;
+      --text: #e8e8eb;
+      --muted: #85858c;
+      --green: #32d583;
+      --red: #ff5c5c;
+      --border: rgba(255,255,255,.07);
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 15px 10px 30px;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--white);
+      background:
+        radial-gradient(
+          circle at 50% -10%,
+          rgba(255,107,0,.22),
+          transparent 35%
+        ),
+        var(--bg);
+    }
+
+    .app {
+      width: 100%;
+      max-width: 440px;
+      margin: auto;
+    }
+
+    .header {
+      text-align: center;
+      padding: 5px 0 18px;
+    }
+
+    .logo {
+      width: 70px;
+      height: 70px;
+      margin: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 22px;
+      background: linear-gradient(
+        145deg,
+        rgba(255,138,61,.2),
+        rgba(255,107,0,.03)
+      );
+      border: 1px solid rgba(255,107,0,.25);
+      box-shadow: 0 0 45px rgba(255,107,0,.13);
+      font-size: 36px;
+    }
+
+    h1 {
+      margin: 11px 0 0;
+      font-size: 24px;
+      font-weight: 900;
+    }
+
+    .header p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .card {
+      padding: 16px;
+      border-radius: 20px;
+      background: linear-gradient(
+        145deg,
+        rgba(25,25,28,.98),
+        rgba(11,11,12,.98)
+      );
+      border: 1px solid var(--border);
+      box-shadow: 0 25px 80px rgba(0,0,0,.55);
+    }
+
+    .platform {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px;
+      margin-bottom: 18px;
+      border-radius: 12px;
+      background: rgba(255,107,0,.05);
+      border: 1px solid rgba(255,107,0,.12);
+    }
+
+    .platform-left {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .platform-icon {
+      width: 34px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9px;
+      color: var(--orange);
+      background: rgba(255,107,0,.12);
+    }
+
+    .platform strong {
+      display: block;
+      font-size: 11px;
+    }
+
+    .platform span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 8px;
+    }
+
+    .badge {
+      padding: 5px 8px;
+      border-radius: 7px;
+      color: #ff995a;
+      background: rgba(255,107,0,.08);
+      border: 1px solid rgba(255,107,0,.16);
+      font-size: 8px;
+      font-weight: 900;
+      letter-spacing: .6px;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: #ddd;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .section-title i {
+      color: var(--orange);
+    }
+
+    .counter {
+      padding: 4px 8px;
+      border-radius: 7px;
+      color: #ff995a;
+      background: rgba(255,107,0,.07);
+      font-size: 8px;
+      font-weight: 900;
+    }
+
+    .links-list {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .link-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .link-number {
+      width: 29px;
+      height: 43px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      color: #55555b;
+      background: rgba(255,255,255,.035);
+      font-size: 8px;
+      font-weight: 900;
+    }
+
+    .link-row.valid .link-number {
+      color: var(--orange);
+    }
+
+    .link-wrapper {
+      position: relative;
+      flex: 1;
+    }
+
+    .link-input {
+      width: 100%;
+      height: 43px;
+      padding: 0 35px;
+      border-radius: 9px;
+      border: 1px solid rgba(255,255,255,.06);
+      outline: none;
+      color: #fff;
+      background: rgba(255,255,255,.035);
+      font-size: 10px;
+    }
+
+    .link-input:focus {
+      border-color: rgba(255,107,0,.55);
+      box-shadow: 0 0 0 3px rgba(255,107,0,.05);
+    }
+
+    .link-icon {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #606067;
+      font-size: 10px;
+    }
+
+    .link-status {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 9px;
+    }
+
+    .remove-link {
+      width: 30px;
+      height: 30px;
+      flex-shrink: 0;
+      border: 0;
+      border-radius: 8px;
+      color: #555;
+      background: rgba(255,255,255,.025);
+      cursor: pointer;
+    }
+
+    .remove-link:hover {
+      color: var(--red);
+    }
+
+    .add-btn {
+      width: 100%;
+      height: 40px;
+      margin-top: 8px;
+      border-radius: 9px;
+      border: 1px dashed rgba(255,107,0,.28);
+      color: #ff914f;
+      background: rgba(255,107,0,.025);
+      font-size: 9px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .add-btn:disabled {
+      opacity: .35;
+    }
+
+    .settings {
+      margin-top: 18px;
+    }
+
+    .intervals {
+      display: grid;
+      grid-template-columns: repeat(4,1fr);
+      gap: 5px;
+      margin-top: 8px;
+    }
+
+    .interval {
+      height: 47px;
+      border-radius: 9px;
+      border: 1px solid rgba(255,255,255,.06);
+      background: rgba(255,255,255,.035);
+      color: #77777e;
+      cursor: pointer;
+    }
+
+    .interval strong {
+      display: block;
+      font-size: 10px;
+    }
+
+    .interval small {
+      display: block;
+      margin-top: 2px;
+      font-size: 7px;
+      color: #4f4f55;
+    }
+
+    .interval.active {
+      color: #fff;
+      border-color: rgba(255,107,0,.55);
+      background: rgba(255,107,0,.11);
+    }
+
+    .interval.active small {
+      color: #ff9453;
+    }
+
+    .quantity {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 11px;
+      padding: 10px 11px;
+      border-radius: 10px;
+      background: rgba(255,255,255,.03);
+      border: 1px solid rgba(255,255,255,.05);
+    }
+
+    .quantity strong {
+      display: block;
+      font-size: 10px;
+    }
+
+    .quantity span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 7px;
+    }
+
+    .quantity-control {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .quantity-button {
+      width: 28px;
+      height: 28px;
+      border: 0;
+      border-radius: 7px;
+      color: #aaa;
+      background: rgba(255,255,255,.06);
+      cursor: pointer;
+    }
+
+    .quantity-number {
+      width: 25px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .summary {
+      margin-top: 13px;
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(255,255,255,.025);
+      border: 1px solid rgba(255,255,255,.05);
+    }
+
+    .summary-title {
+      margin-bottom: 9px;
+      color: #77777e;
+      font-size: 8px;
+      font-weight: 900;
+      letter-spacing: .7px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3,1fr);
+      gap: 5px;
+    }
+
+    .summary-item {
+      padding: 8px 4px;
+      text-align: center;
+      border-radius: 8px;
+      background: rgba(255,255,255,.025);
+    }
+
+    .summary-item i {
+      margin-bottom: 4px;
+      color: var(--orange);
+      font-size: 10px;
+    }
+
+    .summary-item strong {
+      display: block;
+      font-size: 10px;
+    }
+
+    .summary-item span {
+      display: block;
+      margin-top: 2px;
+      color: #55555b;
+      font-size: 6px;
+    }
+
+    .start-btn {
+      width: 100%;
+      height: 53px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 12px;
+      color: #fff;
+      background: linear-gradient(135deg,#ff8a36,#ff5b00);
+      font-size: 12px;
+      font-weight: 900;
+      cursor: pointer;
+      box-shadow: 0 12px 30px rgba(255,107,0,.22);
+    }
+
+    .start-btn:disabled {
+      background: #363638;
+      color: #777;
+      box-shadow: none;
+    }
+
+    #mensagem {
+      display: none;
+      margin-top: 10px;
+      padding: 11px;
+      border-radius: 10px;
+      font-size: 9px;
+      line-height: 1.5;
+    }
+
+    .msg-sucesso {
+      display: block !important;
+      color: #65df93;
+      background: rgba(50,213,131,.06);
+      border: 1px solid rgba(50,213,131,.17);
+    }
+
+    .msg-erro {
+      display: block !important;
+      color: #ff7474;
+      background: rgba(255,92,92,.06);
+      border: 1px solid rgba(255,92,92,.17);
+    }
+
+    .info {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 10px;
+      color: #69696f;
+      background: rgba(255,255,255,.02);
+      font-size: 8px;
+      line-height: 1.5;
+    }
+
+    .info i {
+      color: var(--orange);
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 12px;
+      color: #3d3d42;
+      font-size: 7px;
+    }
+
+    .loading {
+      display: none;
+      text-align: center;
+      padding: 20px 0;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .loading i {
+      color: var(--orange);
+      margin-right: 5px;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="app">
+
+  <header class="header">
+
+    <div class="logo">
+      🦊
+    </div>
+
+    <h1>
+      Raposa Caçadora
+    </h1>
+
+    <p>
+      Automação inteligente de ofertas Shopee
+    </p>
+
+  </header>
+
+  <main class="card">
+
+    <div class="platform">
+
+      <div class="platform-left">
+
+        <div class="platform-icon">
+          <i class="fa-solid fa-bag-shopping"></i>
+        </div>
+
+        <div>
+          <strong>SHOPEE</strong>
+          <span>Central de automação</span>
+        </div>
+
+      </div>
+
+      <div class="badge">
+        PRO
+      </div>
+
+    </div>
+
+    <div class="section-head">
+
+      <div class="section-title">
+        <i class="fa-solid fa-link"></i>
+        Produtos
+      </div>
+
+      <div
+        class="counter"
+        id="linkCounter"
+      >
+        0 / 20
+      </div>
+
+    </div>
+
+    <div
+      class="links-list"
+      id="linksContainer"
+    ></div>
+
+    <button
+      class="add-btn"
+      id="addLinkBtn"
+      type="button"
+      onclick="adicionarLink()"
+    >
+      <i class="fa-solid fa-plus"></i>
+      ADICIONAR PRODUTO
+    </button>
+
+    <div class="settings">
+
+      <div class="section-title">
+        <i class="fa-solid fa-clock"></i>
+        Intervalo entre postagens
+      </div>
+
+      <div class="intervals">
+
+        <button
+          type="button"
+          class="interval active"
+          data-segundos="10"
+        >
+          <strong>10s</strong>
+          <small>rápido</small>
+        </button>
+
+        <button
+          type="button"
+          class="interval"
+          data-segundos="60"
+        >
+          <strong>1 min</strong>
+          <small>normal</small>
+        </button>
+
+        <button
+          type="button"
+          class="interval"
+          data-segundos="300"
+        >
+          <strong>5 min</strong>
+          <small>moderado</small>
+        </button>
+
+        <button
+          type="button"
+          class="interval"
+          data-segundos="600"
+        >
+          <strong>10 min</strong>
+          <small>lento</small>
+        </button>
+
+      </div>
+
+      <div class="quantity">
+
+        <div>
+          <strong>
+            Quantidade de postagens
+          </strong>
+
+          <span>
+            Mínimo 1 • máximo 20
+          </span>
+        </div>
+
+        <div class="quantity-control">
+
+          <button
+            type="button"
+            class="quantity-button"
+            onclick="alterarQuantidade(-1)"
+          >
+            <i class="fa-solid fa-minus"></i>
+          </button>
+
+          <div
+            class="quantity-number"
+            id="quantidade"
+          >
+            1
+          </div>
+
+          <button
+            type="button"
+            class="quantity-button"
+            onclick="alterarQuantidade(1)"
+          >
+            <i class="fa-solid fa-plus"></i>
+          </button>
+
+        </div>
+
+      </div>
+
+    </div>
+
+    <div class="summary">
+
+      <div class="summary-title">
+        RESUMO DA AUTOMAÇÃO
+      </div>
+
+      <div class="summary-grid">
+
+        <div class="summary-item">
+
+          <i class="fa-solid fa-link"></i>
+
+          <strong id="summaryLinks">
+            0
+          </strong>
+
+          <span>
+            PRODUTOS
+          </span>
+
+        </div>
+
+        <div class="summary-item">
+
+          <i class="fa-solid fa-clock"></i>
+
+          <strong id="summaryInterval">
+            10s
+          </strong>
+
+          <span>
+            INTERVALO
+          </span>
+
+        </div>
+
+        <div class="summary-item">
+
+          <i class="fa-solid fa-paper-plane"></i>
+
+          <strong id="summaryPosts">
+            1
+          </strong>
+
+          <span>
+            POSTAGENS
+          </span>
+
+        </div>
+
+      </div>
+
+    </div>
+
+    <button
+      class="start-btn"
+      id="btn-iniciar"
+      type="button"
+      onclick="enviarConfiguracao()"
+    >
+      <i class="fa-solid fa-rocket"></i>
+      INICIAR AUTOMAÇÃO
+    </button>
+
+    <div
+      class="loading"
+      id="loading"
+    >
+      <i class="fa-solid fa-circle-notch fa-spin"></i>
+      Enviando configuração...
+    </div>
+
+    <div
+      id="mensagem"
+    ></div>
+
+    <div class="info">
+
+      <i class="fa-solid fa-shield-halved"></i>
+
+      <div>
+        Adicione até
+        <strong>20 produtos da Shopee</strong>.
+        Escolha o intervalo e a quantidade
+        de postagens.
+        A configuração será enviada
+        diretamente para o servidor.
+      </div>
+
+    </div>
+
+  </main>
+
+  <div class="footer">
+    🦊 Raposa Caçadora PRO
+  </div>
+
+</div>
+
+
+<script>
+
+  /* ==========================================================
+     CONFIGURAÇÃO
+  ========================================================== */
+
+  const API_URL = "";
+
+  const MAX_LINKS = 20;
+
+  let intervaloSelecionado = 10;
+  let quantidade = 1;
+
+
+  /* ==========================================================
+     TELEGRAM WEB APP
+  ========================================================== */
+
+  const tg =
+    window.Telegram?.WebApp || null;
+
+
+  if (tg) {
+
+    try {
+      tg.ready();
+    } catch (erro) {
+      console.error(
+        "Erro no tg.ready():",
+        erro
+      );
+    }
+
+    try {
+      tg.expand();
+    } catch (erro) {
+      console.error(
+        "Erro no tg.expand():",
+        erro
+      );
+    }
+
+    try {
+
+      if (tg.setHeaderColor) {
+
+        tg.setHeaderColor(
+          "#070707"
+        );
+
+      }
+
+    } catch (erro) {
+
+      console.error(
+        "Erro no header do Telegram:",
+        erro
+      );
+
+    }
+
+    try {
+
+      if (tg.setBackgroundColor) {
+
+        tg.setBackgroundColor(
+          "#070707"
+        );
+
+      }
+
+    } catch (erro) {
+
+      console.error(
+        "Erro no background do Telegram:",
+        erro
+      );
+
+    }
+
+  }
+
+
+  /* ==========================================================
+     ELEMENTOS
+  ========================================================== */
+
+  const linksContainer =
+    document.getElementById(
+      "linksContainer"
+    );
+
+  const addLinkBtn =
+    document.getElementById(
+      "addLinkBtn"
+    );
+
+  const linkCounter =
+    document.getElementById(
+      "linkCounter"
+    );
+
+  const summaryLinks =
+    document.getElementById(
+      "summaryLinks"
+    );
+
+  const summaryInterval =
+    document.getElementById(
+      "summaryInterval"
+    );
+
+  const summaryPosts =
+    document.getElementById(
+      "summaryPosts"
+    );
+
+  const quantidadeEl =
+    document.getElementById(
+      "quantidade"
+    );
+
+  const btn =
+    document.getElementById(
+      "btn-iniciar"
+    );
+
+  const msgBox =
+    document.getElementById(
+      "mensagem"
+    );
+
+  const loading =
+    document.getElementById(
+      "loading"
+    );
+
+
+  /* ==========================================================
+     PRIMEIRO CAMPO
+  ========================================================== */
+
+  adicionarLink();
+
+
+  /* ==========================================================
+     ADICIONAR LINK
+  ========================================================== */
+
+  function adicionarLink() {
+
+    const total =
+      document.querySelectorAll(
+        ".link-row"
+      ).length;
+
+
+    if (
+      total >= MAX_LINKS
+    ) {
+
+      mostrarMensagem(
+        "❌ Limite máximo de 20 produtos.",
+        "erro"
+      );
+
+      return;
+    }
+
+
+    const numero =
+      total + 1;
+
+
+    const row =
+      document.createElement(
+        "div"
+      );
+
+
+    row.className =
+      "link-row";
+
+
+    row.innerHTML = `
+
+      <div class="link-number">
+        ${String(numero).padStart(2, "0")}
+      </div>
+
+      <div class="link-wrapper">
+
+        <input
+          type="url"
+          class="link-input"
+          placeholder="Cole o link da Shopee..."
+          autocomplete="off"
+          spellcheck="false"
+        >
+
+        <i
+          class="fa-solid fa-link link-icon"
+        ></i>
+
+        <div class="link-status"></div>
+
+      </div>
+
+      <button
+        type="button"
+        class="remove-link"
+      >
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+
+    `;
+
+
+    linksContainer.appendChild(
+      row
+    );
+
+
+    const input =
+      row.querySelector(
+        ".link-input"
+      );
+
+
+    const status =
+      row.querySelector(
+        ".link-status"
+      );
+
+
+    input.addEventListener(
+      "input",
+      function() {
+
+        validarInput(
+          input,
+          row,
+          status
+        );
+
+        atualizarInterface();
+
+      }
+    );
+
+
+    row
+      .querySelector(
+        ".remove-link"
+      )
+      .addEventListener(
+        "click",
+        function() {
+
+          row.remove();
+
+          renumerar();
+
+          atualizarInterface();
+
+        }
+      );
+
+
+    input.focus();
+
+    atualizarInterface();
+
+  }
+
+
+  /* ==========================================================
+     VALIDAR SHOPEE
+  ========================================================== */
+
+  function validarLinkShopee(
+    link
+  ) {
+
+    try {
+
+      const url =
+        new URL(link);
+
+
+      if (
+        url.protocol !== "http:" &&
+        url.protocol !== "https:"
+      ) {
+
+        return false;
+
+      }
+
+
+      return url.hostname
+        .toLowerCase()
+        .includes(
+          "shopee"
+        );
+
+    } catch {
+
+      return false;
+
+    }
+
+  }
+
+
+  function validarInput(
+    input,
+    row,
+    status
+  ) {
+
+    const valor =
+      input.value.trim();
+
+
+    row.classList.remove(
+      "valid"
+    );
+
+
+    status.innerHTML =
+      "";
+
+
+    if (!valor) {
+
+      return;
+
+    }
+
+
+    if (
+      validarLinkShopee(
+        valor
+      )
+    ) {
+
+      row.classList.add(
+        "valid"
+      );
+
+
+      status.innerHTML =
+        '<i class="fa-solid fa-circle-check" style="color:#32d583"></i>';
+
+    } else {
+
+      status.innerHTML =
+        '<i class="fa-solid fa-circle-xmark" style="color:#ff5c5c"></i>';
+
+    }
+
+  }
+
+
+  /* ==========================================================
+     RENUMERAR
+  ========================================================== */
+
+  function renumerar() {
+
+    document
+      .querySelectorAll(
+        ".link-row"
+      )
+      .forEach(
+        function(row, index) {
+
+          row.querySelector(
+            ".link-number"
+          ).innerText =
+            String(
+              index + 1
+            ).padStart(
+              2,
+              "0"
+            );
+
+        }
+      );
+
+  }
+
+
+  /* ==========================================================
+     OBTER LINKS
+  ========================================================== */
+
+  function obterLinks() {
+
+    return [
+      ...document.querySelectorAll(
+        ".link-input"
+      )
+    ]
+      .map(
+        input =>
+          input.value.trim()
+      )
+      .filter(
+        link =>
+          link.length > 0
+      );
+
+  }
+
+
+  /* ==========================================================
+     QUANTIDADE
+  ========================================================== */
+
+  function alterarQuantidade(
+    valor
+  ) {
+
+    const total =
+      obterLinks().length;
+
+
+    if (
+      total === 0
+    ) {
+
+      mostrarMensagem(
+        "❌ Adicione pelo menos um produto.",
+        "erro"
+      );
+
+      return;
+    }
+
+
+    quantidade += valor;
+
+
+    quantidade =
+      Math.max(
+        1,
+        Math.min(
+          quantidade,
+          total,
+          MAX_LINKS
+        )
+      );
+
+
+    atualizarInterface();
+
+  }
+
+
+  /* ==========================================================
+     INTERVALOS
+  ========================================================== */
+
+  document
+    .querySelectorAll(
+      ".interval"
+    )
+    .forEach(
+      function(button) {
+
+        button.addEventListener(
+          "click",
+          function() {
+
+            document
+              .querySelectorAll(
+                ".interval"
+              )
+              .forEach(
+                function(item) {
+
+                  item.classList.remove(
+                    "active"
+                  );
+
+                }
+              );
+
+
+            button.classList.add(
+              "active"
+            );
+
+
+            intervaloSelecionado =
+              Number(
+                button.dataset.segundos
+              );
+
+
+            atualizarInterface();
+
+          }
+        );
+
+      }
+    );
+
+
+  /* ==========================================================
+     FORMATAR INTERVALO
+  ========================================================== */
+
+  function formatarIntervalo(
+    segundos
+  ) {
+
+    if (
+      segundos < 60
+    ) {
+
+      return `${segundos}s`;
+
+    }
+
+
+    return `${
+      segundos / 60
+    }min`;
+
+  }
+
+
+  /* ==========================================================
+     INTERFACE
+  ========================================================== */
+
+  function atualizarInterface() {
+
+    const links =
+      obterLinks();
+
+
+    summaryLinks.innerText =
+      links.length;
+
+
+    linkCounter.innerText =
+      `${links.length} / ${MAX_LINKS}`;
+
+
+    summaryInterval.innerText =
+      formatarIntervalo(
+        intervaloSelecionado
+      );
+
+
+    if (
+      links.length > 0 &&
+      quantidade > links.length
+    ) {
+
+      quantidade =
+        links.length;
+
+    }
+
+
+    quantidade =
+      Math.max(
+        1,
+        Math.min(
+          quantidade,
+          MAX_LINKS
+        )
+      );
+
+
+    quantidadeEl.innerText =
+      quantidade;
+
+
+    summaryPosts.innerText =
+      quantidade;
+
+
+    const quantidadeCampos =
+      document.querySelectorAll(
+        ".link-row"
+      ).length;
+
+
+    addLinkBtn.disabled =
+      quantidadeCampos >= MAX_LINKS;
+
+
+    if (
+      addLinkBtn.disabled
+    ) {
+
+      addLinkBtn.innerHTML =
+        '<i class="fa-solid fa-check"></i> LIMITE DE 20';
+
+    } else {
+
+      addLinkBtn.innerHTML =
+        '<i class="fa-solid fa-plus"></i> ADICIONAR PRODUTO';
+
+    }
+
+  }
+
+
+  /* ==========================================================
+     MENSAGEM
+  ========================================================== */
+
+  function mostrarMensagem(
+    texto,
+    tipo
+  ) {
+
+    msgBox.className =
+      tipo === "sucesso"
+        ? "msg-sucesso"
+        : "msg-erro";
+
+
+    msgBox.innerText =
+      texto;
+
+
+    msgBox.style.display =
+      "block";
+
+  }
+
+
+  /* ==========================================================
+     ENVIAR CONFIGURAÇÃO
+  ========================================================== */
+
+  async function enviarConfiguracao() {
+
+    const links =
+      obterLinks();
+
+
+    msgBox.style.display =
+      "none";
+
+
+    if (
+      links.length === 0
+    ) {
+
+      mostrarMensagem(
+        "❌ Adicione pelo menos 1 produto da Shopee.",
+        "erro"
+      );
+
+      return;
+
+    }
+
+
+    const invalidos =
+      links.filter(
+        link =>
+          !validarLinkShopee(
+            link
+          )
+      );
+
+
+    if (
+      invalidos.length > 0
+    ) {
+
+      mostrarMensagem(
+        "❌ Corrija os links inválidos antes de iniciar.",
+        "erro"
+      );
+
+      return;
+
+    }
+
+
+    if (
+      quantidade < 1 ||
+      quantidade > links.length
+    ) {
+
+      mostrarMensagem(
+        "❌ A quantidade de postagens é inválida.",
+        "erro"
+      );
+
+      return;
+
+    }
+
+
+    /* ========================================================
+       INIT DATA TELEGRAM
+    ======================================================== */
+
+    const initData =
+      tg
+        ? tg.initData
+        : "";
+
+
+    let usuario =
+      null;
+
+
+    if (
+      tg &&
+      tg.initDataUnsafe &&
+      tg.initDataUnsafe.user
+    ) {
+
+      usuario =
+        tg.initDataUnsafe.user;
+
+    }
+
+
+    /* ========================================================
+       PAYLOAD
+    ======================================================== */
+
+    const dados = {
+
+      links:
+        links.slice(
+          0,
+          quantidade
+        ),
+
+      intervalo:
+        intervaloSelecionado,
+
+      quantidade:
+        quantidade,
+
+      initData:
+        initData,
+
+      user:
+        usuario
+
+    };
+
+
+    /* ========================================================
+       ESTADO VISUAL
+    ======================================================== */
+
+    btn.disabled =
+      true;
+
+
+    btn.innerHTML =
+      '<i class="fa-solid fa-circle-notch fa-spin"></i> ENVIANDO...';
+
+
+    loading.style.display =
+      "block";
+
+
+    /* ========================================================
+       FETCH
+    ======================================================== */
+
+    try {
+
+      const resposta =
+        await fetch(
+          API_URL +
+          "/api/configurar",
+          {
+
+            method:
+              "POST",
+
+            headers: {
+
+              "Content-Type":
+                "application/json",
+
+              "Accept":
+                "application/json"
+
+            },
+
+            body:
+              JSON.stringify(
+                dados
+              )
+
+          }
+        );
+
+
+      const texto =
+        await resposta.text();
+
+
+      let resultado =
+        {};
+
+
+      try {
+
+        resultado =
+          JSON.parse(
+            texto
+          );
+
+      } catch {
+
+        resultado =
+          {};
+
+      }
+
+
+      if (
+        !resposta.ok
+      ) {
+
+        throw new Error(
+          resultado.erro ||
+          resultado.error ||
+          resultado.mensagem ||
+          `Erro HTTP ${resposta.status}`
+        );
+
+      }
+
+
+      /* ======================================================
+         SUCESSO
+      ====================================================== */
+
+      mostrarMensagem(
+
+        "✓ " +
+        (
+          resultado.mensagem ||
+          "Automação iniciada com sucesso!"
+        ),
+
+        "sucesso"
+
+      );
+
+
+      btn.disabled =
+        false;
+
+
+      btn.innerHTML =
+        '<i class="fa-solid fa-check"></i> AUTOMAÇÃO INICIADA';
+
+
+      if (
+        tg &&
+        tg.HapticFeedback
+      ) {
+
+        try {
+
+          tg.HapticFeedback
+            .notificationOccurred(
+              "success"
+            );
+
+        } catch {
+
+        }
+
+      }
+
+
+      /* ======================================================
+         MONITORAR TAREFA
+      ====================================================== */
+
+      if (
+        resultado.task_id
+      ) {
+
+        monitorarTarefa(
+          resultado.task_id
+        );
+
+      }
+
+
+    } catch (
+      erro
+    ) {
+
+      console.error(
+        "Erro ao enviar:",
+        erro
+      );
+
+
+      mostrarMensagem(
+        "❌ " +
+        (
+          erro.message ||
+          "Erro de comunicação com o servidor."
+        ),
+        "erro"
+      );
+
+
+      btn.disabled =
+        false;
+
+
+      btn.innerHTML =
+        '<i class="fa-solid fa-rocket"></i> TENTAR NOVAMENTE';
+
+
+      if (
+        tg &&
+        tg.HapticFeedback
+      ) {
+
+        try {
+
+          tg.HapticFeedback
+            .notificationOccurred(
+              "error"
+            );
+
+        } catch {
+
+        }
+
+      }
+
+    } finally {
+
+      loading.style.display =
+        "none";
+
+    }
+
+  }
+
+
+  /* ==========================================================
+     MONITORAR TAREFA
+  ========================================================== */
+
+  async function monitorarTarefa(
+    taskId
+  ) {
+
+    const url =
+      API_URL +
+      "/api/status?ids=" +
+      encodeURIComponent(taskId);
+
+
+    const intervalo =
+      setInterval(
+        async function() {
+
+          try {
+
+            const resposta =
+              await fetch(
+                url,
+                {
+                  method:
+                    "GET",
+
+                  headers: {
+                    "Accept":
+                      "application/json"
+                  }
+                }
+              );
+
+
+            if (
+              !resposta.ok
+            ) {
+
+              console.error(
+                "Status da tarefa HTTP",
+                resposta.status
+              );
+
+              return;
+
+            }
+
+
+            const dados =
+              await resposta.json();
+
+
+            if (
+              dados.status === "concluida"
+            ) {
+
+              clearInterval(
+                intervalo
+              );
+
+
+              mostrarMensagem(
+                "✓ Automação concluída com sucesso.",
+                "sucesso"
+              );
+
+
+              return;
+
+            }
+
+
+            if (
+              dados.status === "cancelada"
+            ) {
+
+              clearInterval(
+                intervalo
+              );
+
+
+              mostrarMensagem(
+                "⚠ Automação cancelada.",
+                "erro"
+              );
+
+
+              return;
+
+            }
+
+          } catch (
+            erro
+          ) {
+
+            console.error(
+              "Erro monitorando tarefa:",
+              erro
+            );
+
+          }
+
+        },
+        3000
+      );
+
+  }
+
+
+  /* ==========================================================
+     INICIALIZAÇÃO
+  ========================================================== */
+
+  atualizarInterface();
+
+</script>
+
+</body>
+</html>
