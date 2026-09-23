@@ -1489,6 +1489,7 @@ async def comando_status(
             supabase
             .table("produtos_fila")
             .select("status")
+            .eq("fila_origem", FILA_ORIGEM)
             .execute()
         )
 
