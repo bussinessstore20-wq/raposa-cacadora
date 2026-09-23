@@ -16,6 +16,11 @@ from telegram import (
     InlineKeyboardMarkup,
 )
 from telegram.constants import ParseMode
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+
+from instagram_pipeline import processar_webhook_manus
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -151,19 +156,62 @@ class HealthHandler(
 ):
 
     def do_GET(self):
-
         self.send_response(200)
-
         self.send_header(
             "Content-Type",
             "text/plain; charset=utf-8",
         )
-
         self.end_headers()
+        self.wfile.write(b"Raposa Cacadora OK")
 
-        self.wfile.write(
-            b"Raposa Cacadora OK"
+    def do_POST(self):
+        path = self.path.split("?", 1)[0]
+        if path.rstrip("/") != "/webhook/manus":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        signature = self.headers.get("X-Webhook-Signature", "")
+        timestamp = self.headers.get("X-Webhook-Timestamp", "")
+
+        if not verificar_assinatura_manus(
+            body,
+            signature,
+            timestamp,
+            f"https://{self.headers.get('Host', '')}{self.path}",
+        ):
+            self._send_json(401, {"ok": False, "error": "invalid_signature"})
+            return
+
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            ok, message = processar_webhook_manus(supabase, payload)
+            self._send_json(
+                200 if ok else 500,
+                {"ok": ok, "message": message},
+            )
+        except Exception as erro:
+            logger.exception("Erro no webhook Manus: %s", erro)
+            self._send_json(500, {"ok": False, "error": "internal_error"})
+
+    def _send_json(self, status, payload):
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(status)
+        self.send_header(
+            "Content-Type",
+            "application/json; charset=utf-8",
         )
+        self.send_header(
+            "Content-Length",
+            str(len(encoded)),
+        )
+        self.end_headers()
+        self.wfile.write(encoded)
 
     def log_message(
         self,
@@ -171,6 +219,48 @@ class HealthHandler(
         *args,
     ):
         return
+
+
+def verificar_assinatura_manus(
+    body,
+    signature,
+    timestamp,
+    request_url,
+):
+    public_key = os.getenv(
+        "MANUS_WEBHOOK_PUBLIC_KEY",
+        "",
+    ).strip()
+
+    if not public_key or not signature or not timestamp:
+        return False
+
+    try:
+        ts = int(timestamp)
+        if abs(int(time.time()) - ts) > 300:
+            return False
+
+        if "\\n" in public_key:
+            public_key = public_key.replace("\\n", "\n")
+
+        body_hash = hashlib.sha256(body).hexdigest()
+        signed_content = (
+            f"{timestamp}.{request_url}.{body_hash}"
+        ).encode("utf-8")
+
+        key = serialization.load_pem_public_key(
+            public_key.encode("utf-8")
+        )
+        key.verify(
+            base64.b64decode(signature),
+            signed_content,
+            padding.PKCS1v15(),
+            hashes.SHA256(),
+        )
+        return True
+    except Exception:
+        logger.exception("Assinatura do webhook Manus inválida.")
+        return False
 
 
 def iniciar_servidor_http():
