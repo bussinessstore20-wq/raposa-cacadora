@@ -85,7 +85,39 @@ Dados dos produtos:
                     "visibility": "visible",
                 }
             ]
-        }
+        },
+        "title": f"Carrossel Instagram - lote {post_id}",
+        "hide_in_task_list": True,
+        "structured_output_schema": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string"},
+                "caption": {"type": "string"},
+                "slides": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "position": {"type": "integer"},
+                            "product_id": {"type": "integer"},
+                            "headline": {"type": "string"},
+                            "benefit": {"type": "string"},
+                            "asset_url": {"type": "string"},
+                        },
+                        "required": [
+                            "position",
+                            "product_id",
+                            "headline",
+                            "benefit",
+                            "asset_url",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["category", "caption", "slides"],
+            "additionalProperties": False,
+        },
     }
 
     response = requests.post(
