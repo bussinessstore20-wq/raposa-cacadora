@@ -565,6 +565,7 @@ def diagnosticar_telegram_webapp(init_data: str) -> dict:
         )
         resultado["chaves"] = sorted(params.keys())
         recebido = params.pop("hash", "")
+        params.pop("signature", None)
         resultado["hash"] = bool(recebido)
         resultado["user"] = bool(params.get("user"))
 
@@ -620,6 +621,7 @@ def validar_telegram_webapp(init_data: str) -> bool:
     try:
         params = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
         recebido = params.pop("hash", "")
+        params.pop("signature", None)
         if not recebido:
             return False
         data_check_string = "\n".join(f"{k}={params[k]}" for k in sorted(params))
