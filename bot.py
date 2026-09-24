@@ -2178,7 +2178,15 @@ async def callback_controle(
                 if not atualizado.data:
                     await query.answer("Este carrossel já recebeu uma decisão.", show_alert=True)
                     return
-                await asyncio.to_thread(enviar_decisao_manus, post["manus_task_id"], "approve", post_id)
+                try:
+                    await asyncio.to_thread(enviar_decisao_manus, post["manus_task_id"], "approve", post_id)
+                except Exception:
+                    supabase.table("instagram_posts").update({
+                        "status": "ready",
+                        "error": "Falha ao enviar aprovação para a Manus.",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }).eq("id", post_id).execute()
+                    raise
                 texto = (
                     f"🟢 <b>CARROSSEL #{post_id} APROVADO</b>\n\n"
                     "A Manus recebeu a aprovação e foi instruída a publicar no Instagram.\n"
