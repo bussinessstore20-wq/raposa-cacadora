@@ -554,9 +554,8 @@ def validar_assinatura_telegram(init_data: str) -> bool:
     try:
         params = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
         signature = params.pop("signature", "")
-        # Na validação Ed25519 de terceiros, Telegram exige excluir
-        # tanto "signature" quanto "hash" do data-check-string.
-        params.pop("hash", None)
+        # Na validação por assinatura do Telegram, o campo hash faz parte
+        # do data-check-string. Apenas "signature" é removido.
         if not signature:
             return False
         data_check_string = f"{TELEGRAM_BOT_ID}:WebAppData\n" + "\n".join(
@@ -605,9 +604,7 @@ def diagnosticar_telegram_webapp(init_data: str) -> dict:
         )
         resultado["chaves"] = sorted(params.keys())
         recebido = params.pop("hash", "")
-        # Para a validação HMAC do bot, o Telegram calcula o hash
-        # sobre todos os campos recebidos, exceto o próprio "hash".
-        # Portanto, "signature" permanece no data-check-string.
+        params.pop("signature", None)
         resultado["hash"] = bool(recebido)
         resultado["user"] = bool(params.get("user"))
         resultado["signature_valida"] = validar_assinatura_telegram(init_data)
@@ -634,8 +631,8 @@ def diagnosticar_telegram_webapp(init_data: str) -> dict:
             for k in sorted(params)
         )
         secret_key = hmac.new(
-            TELEGRAM_TOKEN.encode("utf-8"),
             b"WebAppData",
+            TELEGRAM_TOKEN.encode("utf-8"),
             hashlib.sha256,
         ).digest()
         calculado = hmac.new(
@@ -666,8 +663,8 @@ def diagnosticar_telegram_webapp(init_data: str) -> dict:
             hashlib.sha256,
         ).hexdigest() if False else ""
         calculado_reverso = hmac.new(
-            TELEGRAM_TOKEN.encode("utf-8"),
             b"WebAppData",
+            TELEGRAM_TOKEN.encode("utf-8"),
             hashlib.sha256,
         ).digest()
         calculado_reverso = hmac.new(
