@@ -124,7 +124,7 @@ Exemplos: cozinha minimalista bege com madeira e plantas para cozinha; quarto ac
 Na capa:
 - texto central grande, serifado, branco e em CAIXA ALTA;
 - título curto e forte relacionado ao ambiente/tema;
-- abaixo do título, uma faixa arredondada bege clara com texto marrom: "com achadinhos da Shopee que ninguém conhece 👌";
+- abaixo do título, uma faixa arredondada bege clara com texto marrom: "com achadinhos da Shopee 👌";
 - pequenos corações de traço branco e brilhinhos espalhados de forma delicada;
 - rodapé com watermark pequeno e elegante "@raposacacadora" dentro de uma pílula branca, letra marrom, discreto mas legível;
 - iluminação quente e composição acolhedora;
