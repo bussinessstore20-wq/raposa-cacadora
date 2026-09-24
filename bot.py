@@ -297,7 +297,8 @@ class HealthHandler(
                 if not user or int(user.get("id", 0)) != int(TELEGRAM_ADMIN_ID):
                     self._json_body(403, {"ok": False, "error": "usuario_nao_autorizado"})
                     return
-                links = dados.get("links") or []                links = extrair_links(" ".join(str(link) for link in links))
+                links = dados.get("links") or []
+                links = extrair_links(" ".join(str(link) for link in links))
                 if not links:
                     self._json_body(400, {"ok": False, "error": "nenhum_link_shopee"})
                     return
