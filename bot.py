@@ -2139,7 +2139,8 @@ async def callback_controle(
 
         return
 
-    await query.answer()
+    if not (query.data and query.data.startswith("manus_")):
+        await query.answer()
 
     if query.data and query.data.startswith("manus_"):
 
