@@ -65,7 +65,7 @@ TELEGRAM_CHAT_ID = os.getenv(
     "",
 ).strip()
 
-TELEGRAM_BOT_ID = ""
+TELEGRAM_BOT_ID = TELEGRAM_TOKEN.split(":", 1)[0] if ":" in TELEGRAM_TOKEN else ""
 
 TELEGRAM_ADMIN_ID = os.getenv(
     "TELEGRAM_ADMIN_ID",
