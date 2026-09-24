@@ -26,7 +26,7 @@ from telegram import (
 )
 from telegram.constants import ParseMode
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import padding, ed25519
 
 from instagram_pipeline import processar_webhook_manus
 
@@ -64,6 +64,8 @@ TELEGRAM_CHAT_ID = os.getenv(
     "TELEGRAM_CHAT_ID",
     "",
 ).strip()
+
+TELEGRAM_BOT_ID = ""
 
 TELEGRAM_ADMIN_ID = os.getenv(
     "TELEGRAM_ADMIN_ID",
@@ -265,12 +267,13 @@ class HealthHandler(
                 init_data = str(dados.get("initData") or "")
                 diagnostico = diagnosticar_telegram_webapp(init_data)
                 logger.info(
-                    "Web App auth recebido: init_len=%d hash=%s user=%s auth_date=%s token_configurado=%s",
+                    "Web App auth recebido: init_len=%d hash=%s user=%s auth_date=%s token_configurado=%s signature_valida=%s",
                     diagnostico["init_len"],
                     diagnostico["hash"],
                     diagnostico["user"],
                     diagnostico["auth_date"],
                     diagnostico["token_configurado"],
+                    diagnostico.get("signature_valida"),
                 )
                 if not diagnostico["valido"]:
                     logger.warning(
@@ -545,6 +548,32 @@ def validar_configuracao():
 # TELEGRAM WEB APP
 # ============================================================
 
+def validar_assinatura_telegram(init_data: str) -> bool:
+    if not init_data or not TELEGRAM_BOT_ID:
+        return False
+    try:
+        params = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+        signature = params.pop("signature", "")
+        params.pop("hash", None)
+        if not signature:
+            return False
+        data_check_string = f"{TELEGRAM_BOT_ID}:WebAppData\\n" + "\\n".join(
+            f"{k}={params[k]}" for k in sorted(params)
+        )
+        public_key = ed25519.Ed25519PublicKey.from_public_bytes(
+            bytes.fromhex("e7bf03a2fa4600703d88dda5bb59f32ed8b02a56c187fe7d34caed242")
+        )
+        # Telegram usa base64url sem padding para a assinatura.
+        padded = signature + "=" * (-len(signature) % 4)
+        public_key.verify(
+            base64.urlsafe_b64decode(padded),
+            data_check_string.encode("utf-8"),
+        )
+        return True
+    except Exception:
+        return False
+
+
 def diagnosticar_telegram_webapp(init_data: str) -> dict:
     resultado = {
         "valido": False,
@@ -577,6 +606,7 @@ def diagnosticar_telegram_webapp(init_data: str) -> dict:
         params.pop("signature", None)
         resultado["hash"] = bool(recebido)
         resultado["user"] = bool(params.get("user"))
+        resultado["signature_valida"] = validar_assinatura_telegram(init_data)
 
         auth_date = params.get("auth_date")
         if auth_date:
@@ -645,6 +675,10 @@ def diagnosticar_telegram_webapp(init_data: str) -> dict:
         resultado["reverso_prefix"] = calculado_reverso[:12]
 
         if not hmac.compare_digest(calculado, recebido):
+            if resultado.get("signature_valida"):
+                resultado["motivo"] = "hash_invalido_token_mismatch_signature_ok"
+                resultado["valido"] = True
+                return resultado
             resultado["motivo"] = "hash_invalido"
             return resultado
 
@@ -2479,9 +2513,12 @@ async def post_init(
 
         me = await application.bot.get_me()
 
+        global TELEGRAM_BOT_ID
+        TELEGRAM_BOT_ID = str(me.id)
         logger.info(
-            "Telegram conectado: @%s",
+            "Telegram conectado: @%s (id=%s)",
             me.username,
+            me.id,
         )
 
     except Exception as erro:
