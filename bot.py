@@ -630,8 +630,8 @@ def diagnosticar_telegram_webapp(init_data: str) -> dict:
             for k in sorted(params)
         )
         secret_key = hmac.new(
-            TELEGRAM_TOKEN.encode("utf-8"),
             b"WebAppData",
+            TELEGRAM_TOKEN.encode("utf-8"),
             hashlib.sha256,
         ).digest()
         calculado = hmac.new(
