@@ -28,6 +28,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 from instagram_pipeline import processar_webhook_manus
+from manus import enviar_mensagem_tarefa
 
 from telegram.ext import (
     Application,
@@ -1933,6 +1934,75 @@ async def callback_controle(
         return
 
     await query.answer()
+
+    if query.data and query.data.startswith(("carousel_approve:", "carousel_reject:")):
+        try:
+            acao, raw_post_id = query.data.split(":", 1)
+            post_id = int(raw_post_id)
+        except (ValueError, AttributeError):
+            await query.answer("Botão inválido.", show_alert=True)
+            return
+
+        if supabase is None:
+            await query.answer("Supabase não está conectado.", show_alert=True)
+            return
+
+        try:
+            resultado = (
+                supabase.table("instagram_posts")
+                .select("id,manus_task_id,status")
+                .eq("id", post_id)
+                .limit(1)
+                .execute()
+            )
+            if not resultado.data:
+                await query.answer("Carrossel não encontrado.", show_alert=True)
+                return
+
+            post = resultado.data[0]
+            task_id = str(post.get("manus_task_id") or "").strip()
+            if not task_id:
+                await query.answer("A tarefa Manus não está vinculada a este carrossel.", show_alert=True)
+                return
+
+            aprovado = acao == "carousel_approve"
+            decisao = "APROVADO" if aprovado else "REPROVADO"
+            instrucao = (
+                f"O carrossel #{post_id} foi APROVADO pelo administrador no Telegram. "
+                "Continue o fluxo e publique o carrossel no Instagram conforme as instruções originais."
+                if aprovado
+                else
+                f"O carrossel #{post_id} foi REPROVADO pelo administrador no Telegram. "
+                "Não publique este carrossel. Encerre o fluxo de publicação desta tarefa."
+            )
+
+            await asyncio.to_thread(enviar_mensagem_tarefa, task_id, instrucao)
+
+            logger.info(
+                "Decisão %s enviada à tarefa Manus %s para o lote #%s.",
+                decisao,
+                task_id,
+                post_id,
+            )
+
+            texto = (
+                f"🦊 <b>CARROSSEL #{post_id} — {decisao}</b>\\n\\n"
+                "A decisão foi enviada ao Manus. "
+                + ("O Manus continuará o fluxo de publicação." if aprovado else "O Manus foi instruído a não publicar.")
+            )
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+                if query.message:
+                    await query.message.reply_text(texto, parse_mode=ParseMode.HTML)
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(texto, parse_mode=ParseMode.HTML)
+
+        except Exception as erro:
+            logger.exception("Erro ao enviar decisão do carrossel #%s para Manus: %s", post_id, erro)
+            await query.answer("Não foi possível enviar a decisão ao Manus.", show_alert=True)
+
+        return
 
     if query.data == "bot_stop":
 
