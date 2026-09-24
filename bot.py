@@ -29,6 +29,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, ed25519
 
 from instagram_pipeline import processar_webhook_manus, enviar_decisao_manus
+from organization_context import bootstrap_legacy_context
 
 from telegram.ext import (
     Application,
@@ -130,6 +131,7 @@ logger = logging.getLogger(
 
 supabase: Client | None = None
 
+# IDs persistentes introduzidos na Fase 2.\n# O fluxo operacional legado continua sendo preservado até as próximas fases.\norganization_id: str | None = None\nsaas_user_id: str | None = None\n
 
 def iniciar_supabase():
 
@@ -2702,6 +2704,22 @@ def main():
     validar_configuracao()
 
     iniciar_supabase()
+
+    # --------------------------------------------------------
+    # CONTEXTO SAAS — FASE 2
+    # --------------------------------------------------------
+    global organization_id, saas_user_id
+    contexto = bootstrap_legacy_context(
+        supabase,
+        int(TELEGRAM_ADMIN_ID),
+    )
+    organization_id = contexto["organization_id"]
+    saas_user_id = contexto["user_id"]
+    logger.info(
+        "Contexto SaaS legado inicializado: organization_id=%s user_id=%s",
+        organization_id,
+        saas_user_id,
+    )
 
     # --------------------------------------------------------
     # RECUPERAR PROCESSAMENTOS PRESOS
