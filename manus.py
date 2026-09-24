@@ -247,3 +247,77 @@ def listar_mensagens_tarefa(task_id: str) -> dict[str, Any]:
         raise ManusAPIError(f"Erro ao consultar mensagens Manus: {data}")
 
     return data
+
+
+def enviar_decisao_manus(task_id: str, decision: str, post_id: int) -> dict[str, Any]:
+    """Envia a decisão do administrador para a mesma tarefa Manus."""
+    if decision not in {"approve", "reject"}:
+        raise ManusAPIError(f"Decisão inválida: {decision}")
+
+    if decision == "approve":
+        content = f"""
+O administrador APROVOU o carrossel do lote #{post_id}.
+
+
+Agora execute a etapa final: PUBLIQUE este carrossel no Instagram usando a conta/conector do Instagram já autorizado nesta tarefa.
+
+
+REGRAS:
+- Não recrie as imagens.
+- Não altere a legenda aprovada, salvo se a plataforma exigir algum ajuste técnico.
+- Publique exatamente o carrossel que acabou de ser aprovado.
+- Aguarde a confirmação real de publicação.
+- Depois de publicar, responda informando que foi publicado e, se disponível, o Instagram media ID.
+- Não considere apenas abrir a tela do Instagram como publicação concluída; só confirme sucesso depois da publicação efetiva.
+""".strip()
+        schema = {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "instagram_media_id": {"type": "string"},
+                "message": {"type": "string"},
+            },
+            "required": ["status", "instagram_media_id", "message"],
+            "additionalProperties": False,
+        }
+    else:
+        content = f"""
+O administrador REPROVOU o carrossel do lote #{post_id}.
+
+
+NÃO publique este carrossel no Instagram.
+
+
+Encerre esta execução sem publicar. Não gere um novo carrossel e não tente publicar novamente.
+""".strip()
+        schema = {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "instagram_media_id": {"type": "string"},
+                "message": {"type": "string"},
+            },
+            "required": ["status", "instagram_media_id", "message"],
+            "additionalProperties": False,
+        }
+
+    payload = {
+        "task_id": task_id,
+        "message": {"content": content},
+        "structured_output_schema": schema,
+    }
+    response = requests.post(
+        f"{MANUS_API_URL}/v2/task.sendMessage",
+        headers=_headers(),
+        json=payload,
+        timeout=60,
+    )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise ManusAPIError(
+            f"Resposta inválida da Manus ao enviar decisão (HTTP {response.status_code})."
+        ) from exc
+    if response.status_code >= 400 or not data.get("ok", True):
+        raise ManusAPIError(f"Erro ao enviar decisão para Manus: {data}")
+    return data
