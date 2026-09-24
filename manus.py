@@ -168,6 +168,38 @@ DADOS DOS PRODUTOS:
     return data
 
 
+def enviar_mensagem_tarefa(task_id: str, content: str) -> dict[str, Any]:
+    """Envia uma decisão/instrução de volta para a mesma tarefa Manus."""
+    if not task_id:
+        raise ManusAPIError("task_id ausente.")
+    if not content.strip():
+        raise ManusAPIError("Mensagem Manus vazia.")
+
+    response = requests.post(
+        f"{MANUS_API_URL}/v2/task.sendMessage",
+        headers=_headers(),
+        json={
+            "task_id": task_id,
+            "message": {
+                "content": content.strip(),
+            },
+        },
+        timeout=60,
+    )
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise ManusAPIError(
+            f"Resposta inválida da Manus ao enviar mensagem (HTTP {response.status_code})."
+        ) from exc
+
+    if response.status_code >= 400 or not data.get("ok", True):
+        raise ManusAPIError(f"Erro ao enviar mensagem para a tarefa Manus: {data}")
+
+    return data
+
+
 def listar_mensagens_tarefa(task_id: str) -> dict[str, Any]:
     response = requests.get(
         f"{MANUS_API_URL}/v2/task.listMessages",
