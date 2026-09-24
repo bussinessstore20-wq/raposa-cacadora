@@ -8,7 +8,7 @@ import requests
 
 from supabase import Client
 
-from manus import ManusAPIError, criar_tarefa_carrossel, listar_mensagens_tarefa, enviar_decisao_manus
+from manus import ManusAPIError, criar_tarefa_carrossel, listar_mensagens_tarefa
 
 
 logger = logging.getLogger("raposa-cacadora.instagram")
@@ -286,6 +286,43 @@ def processar_lote_se_pronto(supabase: Client, post_id: int) -> bool:
             "updated_at": _agora(),
         }).eq("id", post_id).execute()
         logger.exception("Falha no lote Instagram #%s.", post_id)
+        return False
+
+
+def _notificar_publicacao_telegram(post_id: int, instagram_media_id: str | None, mensagem: str) -> bool:
+    if not TELEGRAM_TOKEN or not TELEGRAM_ADMIN_ID:
+        return False
+    texto = (
+        f"🎉 <b>CARROSSEL #{post_id} PUBLICADO NO INSTAGRAM</b>\n\n"
+        f"✅ {mensagem}\n"
+    )
+    if instagram_media_id:
+        texto += f"\n🆔 Media ID: <code>{instagram_media_id}</code>"
+    try:
+        resposta = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": int(TELEGRAM_ADMIN_ID), "text": texto, "parse_mode": "HTML", "disable_web_page_preview": True},
+            timeout=30,
+        )
+        return resposta.ok
+    except Exception:
+        logger.exception("Falha ao notificar publicação do Instagram no Telegram.")
+        return False
+
+
+def _notificar_erro_publicacao_telegram(post_id: int, erro: str) -> bool:
+    if not TELEGRAM_TOKEN or not TELEGRAM_ADMIN_ID:
+        return False
+    texto = f"❌ <b>FALHA AO PUBLICAR CARROSSEL #{post_id}</b>\n\n⚠️ {erro[:2000]}"
+    try:
+        resposta = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": int(TELEGRAM_ADMIN_ID), "text": texto, "parse_mode": "HTML"},
+            timeout=30,
+        )
+        return resposta.ok
+    except Exception:
+        logger.exception("Falha ao notificar erro de publicação no Telegram.")
         return False
 
 
