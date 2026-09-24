@@ -632,8 +632,8 @@ def diagnosticar_telegram_webapp(init_data: str) -> dict:
             for k in sorted(params)
         )
         secret_key = hmac.new(
-            b"WebAppData",
             TELEGRAM_TOKEN.encode("utf-8"),
+            b"WebAppData",
             hashlib.sha256,
         ).digest()
         calculado = hmac.new(
@@ -664,8 +664,8 @@ def diagnosticar_telegram_webapp(init_data: str) -> dict:
             hashlib.sha256,
         ).hexdigest() if False else ""
         calculado_reverso = hmac.new(
-            b"WebAppData",
             TELEGRAM_TOKEN.encode("utf-8"),
+            b"WebAppData",
             hashlib.sha256,
         ).digest()
         calculado_reverso = hmac.new(
