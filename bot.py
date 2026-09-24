@@ -605,7 +605,9 @@ def diagnosticar_telegram_webapp(init_data: str) -> dict:
         )
         resultado["chaves"] = sorted(params.keys())
         recebido = params.pop("hash", "")
-        params.pop("signature", None)
+        # Para a validação HMAC do bot, o Telegram calcula o hash
+        # sobre todos os campos recebidos, exceto o próprio "hash".
+        # Portanto, "signature" permanece no data-check-string.
         resultado["hash"] = bool(recebido)
         resultado["user"] = bool(params.get("user"))
         resultado["signature_valida"] = validar_assinatura_telegram(init_data)
