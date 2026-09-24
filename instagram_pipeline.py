@@ -8,7 +8,7 @@ import requests
 
 from supabase import Client
 
-from manus import ManusAPIError, criar_tarefa_carrossel, listar_mensagens_tarefa
+from manus import ManusAPIError, criar_tarefa_carrossel, listar_mensagens_tarefa, enviar_decisao_manus
 
 
 logger = logging.getLogger("raposa-cacadora.instagram")
@@ -201,9 +201,24 @@ def _enviar_preview_telegram(post_id: int, detail: dict[str, Any], attachments: 
     if task_url:
         texto += f"\n\n🔗 <a href=\"{task_url}\">Abrir tarefa no Manus</a>"
 
+    teclado = {
+        "inline_keyboard": [
+            [
+                {"text": "🟢 APROVAR E PUBLICAR", "callback_data": f"manus_approve:{post_id}"},
+                {"text": "🔴 REPROVAR", "callback_data": f"manus_reject:{post_id}"},
+            ]
+        ]
+    }
+
     resposta = requests.post(
         f"{base}/sendMessage",
-        json={"chat_id": int(TELEGRAM_ADMIN_ID), "text": texto, "parse_mode": "HTML", "disable_web_page_preview": True},
+        json={
+            "chat_id": int(TELEGRAM_ADMIN_ID),
+            "text": texto,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_markup": teclado,
+        },
         timeout=30,
     )
     return resposta.ok
@@ -287,7 +302,7 @@ def processar_webhook_manus(
 
     post_response = (
         supabase.table("instagram_posts")
-        .select("id,status")
+        .select("id,status,source_chat_id,source_message_id")
         .eq("manus_task_id", task_id)
         .limit(1)
         .execute()
@@ -295,64 +310,105 @@ def processar_webhook_manus(
     if not post_response.data:
         return True, "tarefa ignorada: task_id não pertence a esta pipeline"
 
-    post_id = int(post_response.data[0]["id"])
+    post = post_response.data[0]
+    post_id = int(post["id"])
+    status_atual = post.get("status")
 
     if event_type == "task_created":
         return True, "task_created registrado"
 
-    if event_type == "task_stopped":
-        stop_reason = detail.get("stop_reason")
-        if stop_reason == "finish":
-            try:
-                structured = detail.get("structured_output") or {}
-                if not structured.get("success", False):
-                    raise ManusAPIError(structured.get("error") or "Manus não retornou structured output.")
-                value = structured.get("value") or {}
+    if event_type != "task_stopped":
+        return True, "evento ignorado"
 
-                # O webhook oficial traz os arquivos gerados em task_detail.attachments.
-                # Se não vierem no payload, buscamos as mensagens da tarefa para recuperar
-                # os attachments do assistant_message.
-                attachments = _extrair_attachments(detail)
-                if not attachments:
-                    try:
-                        messages = listar_mensagens_tarefa(task_id)
-                        attachments = _extrair_attachments({}, messages)
-                    except Exception:
-                        logger.exception("Não foi possível recuperar attachments da tarefa Manus %s.", task_id)
-
-                supabase.table("instagram_posts").update({
-                    "status": "ready",
-                    "category": value.get("category"),
-                    "caption": value.get("caption"),
-                    "assets": value.get("slides"),
-                    "manus_result": structured,
-                    "updated_at": _agora(),
-                }).eq("id", post_id).execute()
-
-                enviados = _enviar_preview_telegram(
-                    post_id=post_id,
-                    detail=detail,
-                    attachments=attachments,
-                    caption=str(value.get("caption") or ""),
-                    task_url=str(detail.get("task_url") or "") or None,
-                )
-
-                if enviados:
-                    return True, "lote pronto e preview enviado ao Telegram"
-                return True, "lote pronto; preview Telegram não enviado"
-            except Exception as exc:
-                supabase.table("instagram_posts").update({
-                    "status": "error",
-                    "error": str(exc)[:4000],
-                    "updated_at": _agora(),
-                }).eq("id", post_id).execute()
-                return False, "falha ao recuperar resultado Manus"
-
-        supabase.table("instagram_posts").update({
-            "status": "error",
-            "error": detail.get("message") or "Manus interrompeu a tarefa.",
-            "updated_at": _agora(),
-        }).eq("id", post_id).execute()
+    stop_reason = detail.get("stop_reason")
+    if stop_reason != "finish":
+        if status_atual == "publishing":
+            supabase.table("instagram_posts").update({
+                "status": "error",
+                "error": detail.get("message") or "Manus interrompeu a publicação.",
+                "updated_at": _agora(),
+            }).eq("id", post_id).execute()
         return False, "tarefa Manus não concluída"
 
-    return True, "evento ignorado"
+    structured = detail.get("structured_output") or {}
+
+    # Segunda etapa: decisão de aprovação -> publicação no Instagram.
+    if status_atual == "publishing":
+        try:
+            if not structured.get("success", False):
+                raise ManusAPIError(structured.get("error") or "Manus não confirmou a publicação.")
+            value = structured.get("value") or {}
+            if str(value.get("status") or "").lower() not in {"published", "success", "ok"}:
+                raise ManusAPIError("Manus finalizou sem confirmar status de publicação.")
+
+            media_id = str(value.get("instagram_media_id") or "").strip() or None
+            supabase.table("instagram_posts").update({
+                "status": "published",
+                "instagram_media_id": media_id,
+                "manus_result": structured,
+                "published_at": _agora(),
+                "error": None,
+                "updated_at": _agora(),
+            }).eq("id", post_id).execute()
+
+            _notificar_publicacao_telegram(
+                post_id=post_id,
+                instagram_media_id=media_id,
+                mensagem=str(value.get("message") or "Publicação confirmada pela Manus."),
+            )
+            return True, "publicação confirmada e admin notificado"
+        except Exception as exc:
+            supabase.table("instagram_posts").update({
+                "status": "error",
+                "error": str(exc)[:4000],
+                "updated_at": _agora(),
+            }).eq("id", post_id).execute()
+            _notificar_erro_publicacao_telegram(post_id, str(exc))
+            return False, "falha ao confirmar publicação"
+
+    # Primeira etapa: geração do carrossel e preview para aprovação.
+    if status_atual == "manus_processing":
+        try:
+            if not structured.get("success", False):
+                raise ManusAPIError(structured.get("error") or "Manus não retornou structured output.")
+            value = structured.get("value") or {}
+            attachments = _extrair_attachments(detail)
+            if not attachments:
+                try:
+                    messages = listar_mensagens_tarefa(task_id)
+                    attachments = _extrair_attachments({}, messages)
+                except Exception:
+                    logger.exception("Não foi possível recuperar attachments da tarefa Manus %s.", task_id)
+
+            supabase.table("instagram_posts").update({
+                "status": "ready",
+                "category": value.get("category"),
+                "caption": value.get("caption"),
+                "assets": value.get("slides"),
+                "manus_result": structured,
+                "updated_at": _agora(),
+            }).eq("id", post_id).execute()
+
+            enviados = _enviar_preview_telegram(
+                post_id=post_id,
+                detail=detail,
+                attachments=attachments,
+                caption=str(value.get("caption") or ""),
+                task_url=str(detail.get("task_url") or "") or None,
+            )
+            if enviados:
+                return True, "lote pronto e preview enviado ao Telegram"
+            return True, "lote pronto; preview Telegram não enviado"
+        except Exception as exc:
+            supabase.table("instagram_posts").update({
+                "status": "error",
+                "error": str(exc)[:4000],
+                "updated_at": _agora(),
+            }).eq("id", post_id).execute()
+            return False, "falha ao recuperar resultado Manus"
+
+    # Rejeição já registrada no banco: não permitir que um evento tardio publique.
+    if status_atual == "rejected":
+        return True, "carrossel rejeitado; nenhuma publicação realizada"
+
+    return True, "evento final ignorado"\n
