@@ -557,11 +557,11 @@ def validar_assinatura_telegram(init_data: str) -> bool:
         params.pop("hash", None)
         if not signature:
             return False
-        data_check_string = f"{TELEGRAM_BOT_ID}:WebAppData\\n" + "\\n".join(
+        data_check_string = f"{TELEGRAM_BOT_ID}:WebAppData\n" + "\n".join(
             f"{k}={params[k]}" for k in sorted(params)
         )
         public_key = ed25519.Ed25519PublicKey.from_public_bytes(
-            bytes.fromhex("e7bf03a2fa4600703d88dda5bb59f32ed8b02a56c187fe7d34caed242")
+            bytes.fromhex("e7bf03a2fa4602af4580703d88dda5bb59f32ed8b02a56c187fe7d34caed242")
         )
         # Telegram usa base64url sem padding para a assinatura.
         padded = signature + "=" * (-len(signature) % 4)
