@@ -263,7 +263,22 @@ class HealthHandler(
             try:
                 dados = json.loads(body.decode("utf-8"))
                 init_data = str(dados.get("initData") or "")
-                if not validar_telegram_webapp(init_data):
+                diagnostico = diagnosticar_telegram_webapp(init_data)
+                logger.info(
+                    "Web App auth recebido: init_len=%d hash=%s user=%s auth_date=%s token_configurado=%s",
+                    diagnostico["init_len"],
+                    diagnostico["hash"],
+                    diagnostico["user"],
+                    diagnostico["auth_date"],
+                    diagnostico["token_configurado"],
+                )
+                if not diagnostico["valido"]:
+                    logger.warning(
+                        "Web App auth rejeitado: motivo=%s chaves=%s auth_age=%s",
+                        diagnostico["motivo"],
+                        ",".join(diagnostico["chaves"]),
+                        diagnostico["auth_age"],
+                    )
                     self._json_body(401, {"ok": False, "error": "telegram_auth_invalid"})
                     return
                 user = extrair_usuario_webapp(init_data)
@@ -520,6 +535,84 @@ def validar_configuracao():
 # ============================================================
 # TELEGRAM WEB APP
 # ============================================================
+
+def diagnosticar_telegram_webapp(init_data: str) -> dict:
+    resultado = {
+        "valido": False,
+        "motivo": "init_data_vazio",
+        "init_len": len(init_data or ""),
+        "hash": False,
+        "user": False,
+        "auth_date": False,
+        "auth_age": None,
+        "token_configurado": bool(TELEGRAM_TOKEN),
+        "chaves": [],
+    }
+
+    if not init_data:
+        return resultado
+
+    if not TELEGRAM_TOKEN:
+        resultado["motivo"] = "token_nao_configurado"
+        return resultado
+
+    try:
+        params = dict(
+            urllib.parse.parse_qsl(
+                init_data,
+                keep_blank_values=True,
+            )
+        )
+        resultado["chaves"] = sorted(params.keys())
+        recebido = params.pop("hash", "")
+        resultado["hash"] = bool(recebido)
+        resultado["user"] = bool(params.get("user"))
+
+        auth_date = params.get("auth_date")
+        if auth_date:
+            try:
+                idade = int(time.time()) - int(auth_date)
+                resultado["auth_age"] = idade
+                resultado["auth_date"] = True
+                if idade > 86400:
+                    resultado["motivo"] = "auth_date_expirado"
+                    return resultado
+            except (TypeError, ValueError):
+                resultado["motivo"] = "auth_date_invalido"
+                return resultado
+
+        if not recebido:
+            resultado["motivo"] = "hash_ausente"
+            return resultado
+
+        data_check_string = "\n".join(
+            f"{k}={params[k]}"
+            for k in sorted(params)
+        )
+        secret_key = hmac.new(
+            TELEGRAM_TOKEN.encode("utf-8"),
+            b"WebAppData",
+            hashlib.sha256,
+        ).digest()
+        calculado = hmac.new(
+            secret_key,
+            data_check_string.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+        if not hmac.compare_digest(calculado, recebido):
+            resultado["motivo"] = "hash_invalido"
+            return resultado
+
+        resultado["valido"] = True
+        resultado["motivo"] = "ok"
+        return resultado
+
+    except Exception as erro:
+        logger.exception("Erro no diagnóstico do Telegram Web App: %s", erro)
+        resultado["motivo"] = "parse_erro"
+        return resultado
+
 
 def validar_telegram_webapp(init_data: str) -> bool:
     if not init_data or not TELEGRAM_TOKEN:
