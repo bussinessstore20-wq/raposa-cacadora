@@ -279,6 +279,15 @@ class HealthHandler(
                         ",".join(diagnostico["chaves"]),
                         diagnostico["auth_age"],
                     )
+                    logger.warning(
+                        "Web App auth diagnóstico: hash=%s calculado=%s reverso=%s data_len=%s data_sha=%s token_fp=%s",
+                        diagnostico.get("hash_prefix"),
+                        diagnostico.get("calculado_prefix"),
+                        diagnostico.get("reverso_prefix"),
+                        diagnostico.get("data_check_len"),
+                        diagnostico.get("data_check_sha256"),
+                        diagnostico.get("token_fingerprint"),
+                    )
                     self._json_body(401, {"ok": False, "error": "telegram_auth_invalid"})
                     return
                 user = extrair_usuario_webapp(init_data)
@@ -600,6 +609,40 @@ def diagnosticar_telegram_webapp(init_data: str) -> dict:
             data_check_string.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
+
+        # Diagnóstico seguro: não registra token nem initData completo.
+        resultado["hash_prefix"] = recebido[:12]
+        resultado["calculado_prefix"] = calculado[:12]
+        resultado["data_check_len"] = len(data_check_string)
+        resultado["data_check_sha256"] = hashlib.sha256(
+            data_check_string.encode("utf-8")
+        ).hexdigest()[:12]
+        resultado["token_fingerprint"] = hashlib.sha256(
+            TELEGRAM_TOKEN.encode("utf-8")
+        ).hexdigest()[:12]
+
+        # Compara variantes apenas em memória para identificar divergência
+        # de algoritmo/normalização sem expor dados sensíveis nos logs.
+        calculado_com_signature = hmac.new(
+            secret_key,
+            "\n".join(
+                f"{k}={params[k]}"
+                for k in sorted(params | {"signature": ""})
+            ).encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest() if False else ""
+        calculado_reverso = hmac.new(
+            b"WebAppData",
+            TELEGRAM_TOKEN.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        calculado_reverso = hmac.new(
+            calculado_reverso,
+            data_check_string.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+        resultado["reverso_prefix"] = calculado_reverso[:12]
 
         if not hmac.compare_digest(calculado, recebido):
             resultado["motivo"] = "hash_invalido"
