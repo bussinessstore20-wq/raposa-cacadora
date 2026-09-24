@@ -4,6 +4,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
+import requests
+
 from supabase import Client
 
 from manus import ManusAPIError, criar_tarefa_carrossel, listar_mensagens_tarefa
@@ -15,6 +17,8 @@ INSTAGRAM_BATCH_SIZE = max(1, int(os.getenv("INSTAGRAM_BATCH_SIZE", "5")))
 INSTAGRAM_AUTO_BATCH = os.getenv("INSTAGRAM_AUTO_BATCH", "true").strip().lower() in {
     "1", "true", "yes", "on"
 }
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+TELEGRAM_ADMIN_ID = os.getenv("TELEGRAM_ADMIN_ID", "").strip()
 
 
 def _agora() -> str:
@@ -118,11 +122,91 @@ def _buscar_produtos_do_lote(supabase: Client, post_id: int) -> list[dict[str, A
 
 
 def _montar_resultado_manus(messages: dict[str, Any]) -> dict[str, Any]:
-    """Guarda a resposta da Manus sem presumir um formato específico de asset."""
     return {
         "raw": messages,
         "captured_at": _agora(),
     }
+
+
+def _extrair_attachments(detail: dict[str, Any], messages: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    """Extrai URLs temporárias dos arquivos gerados pela Manus.
+
+    Os URLs de attachment são próprios para download e podem expirar; são usados
+    imediatamente para enviar as imagens ao Telegram, não como identidade permanente.
+    """
+    encontrados: list[dict[str, str]] = []
+
+    def adicionar(item: dict[str, Any] | None):
+        if not isinstance(item, dict):
+            return
+        url = str(item.get("url") or "").strip()
+        if not url.startswith(("https://", "http://")):
+            return
+        nome = str(item.get("file_name") or item.get("filename") or "imagem").strip()
+        chave = (nome, url)
+        if chave not in {(x["file_name"], x["url"]) for x in encontrados}:
+            encontrados.append({"file_name": nome, "url": url})
+
+    for item in detail.get("attachments") or []:
+        adicionar(item)
+
+    if messages:
+        for message in messages.get("messages") or []:
+            for container_name in ("assistant_message", "structured_output_result"):
+                container = message.get(container_name) or {}
+                for item in container.get("attachments") or []:
+                    adicionar(item)
+
+    return encontrados
+
+
+def _enviar_preview_telegram(post_id: int, detail: dict[str, Any], attachments: list[dict[str, str]], caption: str, task_url: str | None) -> bool:
+    """Envia o resultado visual da Manus ao chat administrativo."""
+    if not TELEGRAM_TOKEN or not TELEGRAM_ADMIN_ID or not attachments:
+        logger.warning("Preview Telegram não enviado: token/chat/attachments ausente.")
+        return False
+
+    base = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+    enviados = 0
+
+    # Telegram aceita no máximo 10 itens em um media group.
+    for inicio in range(0, len(attachments), 10):
+        grupo = attachments[inicio:inicio + 10]
+        media = []
+        for pos, item in enumerate(grupo):
+            parte = {
+                "type": "photo",
+                "media": item["url"],
+            }
+            if inicio == 0 and pos == 0:
+                parte["caption"] = f"🦊 <b>CARROSSEL #{post_id}</b>\n\n{caption[:900]}"
+                parte["parse_mode"] = "HTML"
+            media.append(parte)
+
+        resposta = requests.post(
+            f"{base}/sendMediaGroup",
+            json={"chat_id": int(TELEGRAM_ADMIN_ID), "media": media},
+            timeout=60,
+        )
+        if not resposta.ok:
+            logger.error("Telegram recusou preview do lote #%s: %s", post_id, resposta.text[:1000])
+            return False
+        enviados += len(grupo)
+
+    texto = (
+        f"🦊 <b>CARROSSEL #{post_id} RECEBIDO DA MANUS</b>\n\n"
+        f"📸 <b>{enviados}</b> imagem(ns) enviadas acima.\n"
+        "👀 Revise a capa e os produtos antes da publicação."
+    )
+    if task_url:
+        texto += f"\n\n🔗 <a href=\"{task_url}\">Abrir tarefa no Manus</a>"
+
+    resposta = requests.post(
+        f"{base}/sendMessage",
+        json={"chat_id": int(TELEGRAM_ADMIN_ID), "text": texto, "parse_mode": "HTML", "disable_web_page_preview": True},
+        timeout=30,
+    )
+    return resposta.ok
 
 
 def processar_lote_se_pronto(supabase: Client, post_id: int) -> bool:
@@ -151,13 +235,9 @@ def processar_lote_se_pronto(supabase: Client, post_id: int) -> bool:
     if total < INSTAGRAM_BATCH_SIZE or len(produtos) < total:
         return False
 
-    # Reserva o lote antes de chamar a API externa, evitando chamadas duplicadas.
     reservado = (
         supabase.table("instagram_posts")
-        .update({
-            "status": "manus_processing",
-            "updated_at": _agora(),
-        })
+        .update({"status": "manus_processing", "updated_at": _agora()})
         .eq("id", post_id)
         .eq("status", "pending")
         .execute()
@@ -177,15 +257,11 @@ def processar_lote_se_pronto(supabase: Client, post_id: int) -> bool:
         supabase.table("instagram_posts").update({
             "manus_task_id": task_id,
             "manus_task_url": task_url,
-            "prompt": "Carrossel Instagram criado automaticamente pela pipeline.",
+            "prompt": "Carrossel Instagram criado automaticamente pela pipeline; preview enviado ao Telegram quando concluído.",
             "updated_at": _agora(),
         }).eq("id", post_id).execute()
 
-        logger.info(
-            "Lote Instagram #%s enviado para Manus: %s",
-            post_id,
-            task_id,
-        )
+        logger.info("Lote Instagram #%s enviado para Manus: %s", post_id, task_id)
         return True
 
     except Exception as exc:
@@ -230,10 +306,20 @@ def processar_webhook_manus(
             try:
                 structured = detail.get("structured_output") or {}
                 if not structured.get("success", False):
-                    raise ManusAPIError(
-                        structured.get("error") or "Manus não retornou structured output."
-                    )
+                    raise ManusAPIError(structured.get("error") or "Manus não retornou structured output.")
                 value = structured.get("value") or {}
+
+                # O webhook oficial traz os arquivos gerados em task_detail.attachments.
+                # Se não vierem no payload, buscamos as mensagens da tarefa para recuperar
+                # os attachments do assistant_message.
+                attachments = _extrair_attachments(detail)
+                if not attachments:
+                    try:
+                        messages = listar_mensagens_tarefa(task_id)
+                        attachments = _extrair_attachments({}, messages)
+                    except Exception:
+                        logger.exception("Não foi possível recuperar attachments da tarefa Manus %s.", task_id)
+
                 supabase.table("instagram_posts").update({
                     "status": "ready",
                     "category": value.get("category"),
@@ -242,7 +328,18 @@ def processar_webhook_manus(
                     "manus_result": structured,
                     "updated_at": _agora(),
                 }).eq("id", post_id).execute()
-                return True, "lote pronto"
+
+                enviados = _enviar_preview_telegram(
+                    post_id=post_id,
+                    detail=detail,
+                    attachments=attachments,
+                    caption=str(value.get("caption") or ""),
+                    task_url=str(detail.get("task_url") or "") or None,
+                )
+
+                if enviados:
+                    return True, "lote pronto e preview enviado ao Telegram"
+                return True, "lote pronto; preview Telegram não enviado"
             except Exception as exc:
                 supabase.table("instagram_posts").update({
                     "status": "error",
