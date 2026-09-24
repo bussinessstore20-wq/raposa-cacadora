@@ -45,11 +45,69 @@ def criar_tarefa_carrossel(produtos: list[dict[str, Any]], post_id: int) -> dict
         })
 
     prompt = f"""
-Você é o criador visual da Raposa Caçadora, especializado em carrosséis virais para Instagram.
+Você é o criador visual e de conteúdo da Raposa Caçadora para Instagram.
 
-Crie um carrossel vertical 4:5 (1080x1350) com {len(produtos_publicos)} produtos da Shopee.
-O carrossel deve ter EXATAMENTE 1 capa + 1 slide para cada produto.
-Idioma: português do Brasil.
+Antes de criar qualquer imagem ou legenda, ANALISE O CONJUNTO COMPLETO dos produtos recebidos. Não analise cada produto isoladamente e não comece a criação antes de entender o lote como um todo.
+
+ETAPA 1 — ANÁLISE DO LOTE
+Identifique a partir dos dados fornecidos:
+- categoria principal;
+- subcategoria;
+- características que aparecem em comum entre os produtos;
+- estilo, estética ou tema predominante;
+- público que provavelmente se interessa por esse conjunto;
+- ambiente ou situação de uso;
+- benefícios e características reais que podem ser destacados;
+- palavras-chave relevantes para Instagram;
+- um CONCEITO CENTRAL específico para este lote.
+
+O conceito deve nascer dos produtos reais. Evite usar sempre a mesma fórmula de "5 achadinhos da Shopee". A chamada deve explicar por que aqueles 5 produtos fazem sentido juntos.
+
+IMPORTANTE:
+- Não invente informações que não estejam nos dados.
+- Não diga que algo é "viral", "mais vendido", "mais visto", "melhor", "barato", "imperdível" ou "ninguém conhece" sem dados que comprovem isso.
+- Preços, descontos, avaliações e vendas só podem ser mencionados quando estiverem disponíveis nos dados recebidos.
+- Se os produtos forem de categorias diferentes, procure a conexão real entre eles e crie o conceito a partir dessa conexão. Não force uma categoria inexistente.
+
+ETAPA 2 — CONCEITO E COERÊNCIA
+Depois da análise, defina um único conceito editorial para o carrossel.
+
+A capa, as cenas dos produtos, a legenda, o CTA e as hashtags devem conversar entre si e seguir esse mesmo conceito.
+
+Exemplos de direção editorial:
+- produtos de cozinha → cozinha, organização, praticidade ou preparo de alimentos;
+- moda masculina → guarda-roupa, combinações, estilo e ocasiões de uso;
+- decoração → ambiente, composição, estética e transformação;
+- acessórios → rotina, estilo ou ocasião em que são usados.
+
+Esses são apenas exemplos. Escolha o conceito de acordo com os produtos reais.
+
+ETAPA 3 — CONTEÚDO DOS 5 PRODUTOS
+- Numere os produtos de 1 a {len(produtos_publicos)} na ordem em que forem apresentados.
+- Para cada produto, destaque somente benefícios ou características sustentados pelos dados.
+- Faça cada produto ter uma função clara dentro do conceito do conjunto.
+- Não repita uma descrição genérica para todos os produtos.
+
+ETAPA 4 — LEGENDA DO INSTAGRAM
+Gere uma legenda natural, em português do Brasil, com linguagem de criador de conteúdo da Raposa Caçadora.
+
+A legenda deve seguir esta estrutura:
+1. HOOK: uma abertura específica e interessante baseada no conceito do lote.
+2. CONTEXTO: explique rapidamente por que esses produtos combinam.
+3. LISTA: apresente os produtos numerados de 1 a {len(produtos_publicos)}.
+4. CTA: incentive a pessoa a curtir, seguir @raposacacadora e acessar os links disponíveis na bio/stories.
+5. PERGUNTA: pergunte qual produto é o favorito, usando os números.
+6. HASHTAGS: gere de 5 a 10 hashtags relevantes e específicas para o conteúdo.
+
+As hashtags devem ser escolhidas dinamicamente a partir da categoria, subcategoria, tema, estilo e produtos. Distribua as hashtags entre esses contextos e evite hashtags genéricas ou sem relação com o conteúdo.
+
+Quando apropriado, use exatamente a ideia de CTA:
+"👉 Curte se você gostou
+👉 Segue @raposacacadora pra não perder nenhum achado
+👉 Comenta "EU QUERO" se quiser conferir os links
+Qual desses {len(produtos_publicos)} é o seu favorito? 1, 2, 3, 4 ou 5? 👇"
+
+Adapte o texto ao contexto quando necessário, mas não invente promessas.
 
 DIREÇÃO VISUAL OBRIGATÓRIA
 - Estética: Pinterest viral, cozy aesthetic, elegante e fotorealista.
@@ -97,6 +155,8 @@ REGRAS DE CONTEÚDO
 - Preserve exatamente os links de afiliado recebidos.
 - Gere uma legenda curta para Instagram com CTA.
 - Mantenha a mesma identidade visual entre capa e slides, mas faça cada cena de produto diferente e específica.
+- O conteúdo textual deve refletir a análise do lote e o conceito central definidos antes.
+- Não deixe a legenda genérica quando houver características suficientes para criar um gancho específico.
 
 Retorne no structured output:
 1. categoria identificada;
