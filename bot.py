@@ -28,7 +28,7 @@ from telegram.constants import ParseMode
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, ed25519
 
-from instagram_pipeline import processar_webhook_manus
+from instagram_pipeline import processar_webhook_manus, enviar_decisao_manus
 
 from telegram.ext import (
     Application,
@@ -2140,6 +2140,86 @@ async def callback_controle(
         return
 
     await query.answer()
+
+    if query.data and query.data.startswith("manus_"):
+
+        partes = query.data.split(":", 1)
+        acao = partes[0]
+        try:
+            post_id = int(partes[1])
+        except (IndexError, ValueError):
+            await query.answer("Carrossel inválido.", show_alert=True)
+            return
+
+        try:
+            resposta = (
+                supabase.table("instagram_posts")
+                .select("id,status,manus_task_id,manus_task_url,category")
+                .eq("id", post_id)
+                .limit(1)
+                .execute()
+            )
+            if not resposta.data:
+                await query.answer("Carrossel não encontrado.", show_alert=True)
+                return
+            post = resposta.data[0]
+            if post.get("status") != "ready" or not post.get("manus_task_id"):
+                await query.answer("Este carrossel já foi processado ou não está pronto.", show_alert=True)
+                return
+
+            if acao == "manus_approve":
+                atualizado = (
+                    supabase.table("instagram_posts")
+                    .update({"status": "publishing", "updated_at": datetime.now(timezone.utc).isoformat()})
+                    .eq("id", post_id)
+                    .eq("status", "ready")
+                    .execute()
+                )
+                if not atualizado.data:
+                    await query.answer("Este carrossel já recebeu uma decisão.", show_alert=True)
+                    return
+                await asyncio.to_thread(enviar_decisao_manus, post["manus_task_id"], "approve", post_id)
+                texto = (
+                    f"🟢 <b>CARROSSEL #{post_id} APROVADO</b>\n\n"
+                    "A Manus recebeu a aprovação e foi instruída a publicar no Instagram.\n"
+                    "⏳ Aguardando confirmação da publicação..."
+                )
+                await query.answer("Aprovado. A Manus foi acionada.")
+            elif acao == "manus_reject":
+                atualizado = (
+                    supabase.table("instagram_posts")
+                    .update({"status": "rejected", "error": "Reprovado pelo administrador.", "updated_at": datetime.now(timezone.utc).isoformat()})
+                    .eq("id", post_id)
+                    .eq("status", "ready")
+                    .execute()
+                )
+                if not atualizado.data:
+                    await query.answer("Este carrossel já recebeu uma decisão.", show_alert=True)
+                    return
+                await asyncio.to_thread(enviar_decisao_manus, post["manus_task_id"], "reject", post_id)
+                texto = (
+                    f"🔴 <b>CARROSSEL #{post_id} REPROVADO</b>\n\n"
+                    "A Manus recebeu a decisão e não deve publicar este carrossel.\n"
+                    "🗑️ Lote encerrado sem publicação."
+                )
+                await query.answer("Reprovado. A Manus foi avisada.")
+            else:
+                await query.answer("Ação inválida.", show_alert=True)
+                return
+
+            try:
+                await query.edit_message_text(texto, parse_mode=ParseMode.HTML)
+            except Exception:
+                if query.message:
+                    await query.message.reply_text(texto, parse_mode=ParseMode.HTML)
+            return
+        except Exception as erro:
+            logger.exception("Erro ao processar decisão do carrossel #%s: %s", post_id, erro)
+            try:
+                await query.answer("Erro ao processar a decisão.", show_alert=True)
+            except Exception:
+                pass
+            return
 
     if query.data == "bot_stop":
 
