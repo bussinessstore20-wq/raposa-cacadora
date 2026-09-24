@@ -98,6 +98,7 @@ PORT = int(
 
 MAX_LINKS_POR_ENVIO = 20
 FILA_ORIGEM = "raposa-cacadora"
+BOT_ID = "raposa-cacadora"
 
 WEBAPP_URL = os.getenv(
     "WEBAPP_URL",
@@ -210,6 +211,7 @@ class HealthHandler(
                     .select("id,status")
                     .in_("id", ids)
                     .eq("fila_origem", FILA_ORIGEM)
+        .eq("bot_id", BOT_ID)
                     .execute()
                 )
                 dados = dados.data
@@ -846,6 +848,7 @@ def inserir_links(
                         "link": link,
                         "status": "pending",
                         "fila_origem": FILA_ORIGEM,
+                        "bot_id": BOT_ID,
                     }
                 )
                 .execute()
@@ -910,6 +913,7 @@ def buscar_proximo_produto():
         .select("*")
         .eq("status", "pending")
         .eq("fila_origem", FILA_ORIGEM)
+        .eq("bot_id", BOT_ID)
         .order("created_at", desc=False)
         .limit(1)
         .execute()
@@ -946,6 +950,7 @@ def marcar_processando(
             }
         )
         .eq("id", produto_id)
+        .eq("bot_id", BOT_ID)
         .eq("status", "pending")
         .execute()
     )
@@ -1003,6 +1008,7 @@ def marcar_publicado(
         .table("produtos_fila")
         .update(dados)
         .eq("id", produto_id)
+        .eq("bot_id", BOT_ID)
         .execute()
     )
 
@@ -1024,6 +1030,7 @@ def marcar_erro(
         .table("produtos_fila")
         .select("tentativas")
         .eq("id", produto_id)
+        .eq("bot_id", BOT_ID)
         .limit(1)
         .execute()
     )
@@ -1054,6 +1061,7 @@ def marcar_erro(
             }
         )
         .eq("id", produto_id)
+        .eq("bot_id", BOT_ID)
         .execute()
     )
 
@@ -1084,6 +1092,7 @@ def recuperar_processamentos_presos():
         .table("produtos_fila")
         .select("id")
         .eq("status", "processing")
+        .eq("bot_id", BOT_ID)
         .lt("processing_at", limite)
         .execute()
     )
@@ -1105,6 +1114,7 @@ def recuperar_processamentos_presos():
                 }
             )
             .eq("id", produto_id)
+        .eq("bot_id", BOT_ID)
             .eq("status", "processing")
             .execute()
         )
@@ -1683,6 +1693,7 @@ async def comando_status(
             .table("produtos_fila")
             .select("status")
             .eq("fila_origem", FILA_ORIGEM)
+        .eq("bot_id", BOT_ID)
             .execute()
         )
 
@@ -1785,6 +1796,7 @@ async def comando_fila(
                 "id,link,product_name,status,created_at"
             )
             .eq("fila_origem", FILA_ORIGEM)
+        .eq("bot_id", BOT_ID)
             .order("id", desc=False)
             .limit(100)
             .execute()
@@ -1891,6 +1903,7 @@ async def comando_erros(
                 "id,link,erro,tentativas"
             )
             .eq("fila_origem", FILA_ORIGEM)
+        .eq("bot_id", BOT_ID)
             .eq("status", "error")
             .order("id", desc=False)
             .limit(20)
@@ -1998,6 +2011,7 @@ async def comando_retry(
                 }
             )
             .eq("fila_origem", FILA_ORIGEM)
+        .eq("bot_id", BOT_ID)
             .eq("status", "error")
             .execute()
         )
