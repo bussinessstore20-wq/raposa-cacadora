@@ -554,8 +554,9 @@ def validar_assinatura_telegram(init_data: str) -> bool:
     try:
         params = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
         signature = params.pop("signature", "")
-        # Na validação por assinatura do Telegram, o campo hash faz parte
-        # do data-check-string. Apenas "signature" é removido.
+        # Na validação Ed25519 de terceiros, Telegram exige excluir
+        # tanto "signature" quanto "hash" do data-check-string.
+        params.pop("hash", None)
         if not signature:
             return False
         data_check_string = f"{TELEGRAM_BOT_ID}:WebAppData\n" + "\n".join(
