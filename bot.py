@@ -22,6 +22,7 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    WebAppInfo,
 )
 from telegram.constants import ParseMode
 from cryptography.hazmat.primitives import hashes, serialization
@@ -95,6 +96,11 @@ PORT = int(
 
 MAX_LINKS_POR_ENVIO = 20
 FILA_ORIGEM = "raposa-cacadora"
+
+WEBAPP_URL = os.getenv(
+    "WEBAPP_URL",
+    "https://raposa-cacadora-git-main-raposacacadora.vercel.app/",
+).strip()
 
 # ============================================================
 # LOG
@@ -1420,6 +1426,12 @@ def teclado_controle():
 
     return InlineKeyboardMarkup(
         [
+            [
+                InlineKeyboardButton(
+                    "🦊 ABRIR WEB APP",
+                    web_app=WebAppInfo(url=WEBAPP_URL),
+                ),
+            ],
             [
                 InlineKeyboardButton(
                     "▶️ INICIAR",
