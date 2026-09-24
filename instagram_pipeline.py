@@ -196,16 +196,32 @@ def _enviar_preview_telegram(post_id: int, detail: dict[str, Any], attachments: 
     texto = (
         f"🦊 <b>CARROSSEL #{post_id} RECEBIDO DA MANUS</b>\n\n"
         f"📸 <b>{enviados}</b> imagem(ns) enviadas acima.\n"
-        "👀 Revise a capa e os produtos antes da publicação."
+        "👀 Revise a capa e os produtos antes da publicação.\n"
+        "Escolha uma opção abaixo:"
     )
     if task_url:
         texto += f"\n\n🔗 <a href=\"{task_url}\">Abrir tarefa no Manus</a>"
 
     resposta = requests.post(
         f"{base}/sendMessage",
-        json={"chat_id": int(TELEGRAM_ADMIN_ID), "text": texto, "parse_mode": "HTML", "disable_web_page_preview": True},
+        json={
+            "chat_id": int(TELEGRAM_ADMIN_ID),
+            "text": texto,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_markup": {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ APROVAR", "callback_data": f"carousel_approve:{post_id}"},
+                        {"text": "❌ REPROVAR", "callback_data": f"carousel_reject:{post_id}"},
+                    ]
+                ]
+            },
+        },
         timeout=30,
     )
+    if not resposta.ok:
+        logger.error("Telegram recusou os botões do preview do lote #%s: %s", post_id, resposta.text[:1000])
     return resposta.ok
 
 
