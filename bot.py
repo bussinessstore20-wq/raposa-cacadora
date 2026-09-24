@@ -48,6 +48,8 @@ from instagram_pipeline import (
     criar_lote_instagram,
     registrar_produto_processado,
     processar_lote_se_pronto,
+    _extrair_attachments,
+    _enviar_preview_telegram,
 )
 
 
@@ -1840,6 +1842,81 @@ async def comando_retry(
 
 
 # ============================================================
+# /REENVIAR_ULTIMO
+# ============================================================
+
+async def comando_reenviar_ultimo(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    if not usuario_autorizado(update):
+        return
+
+    if supabase is None:
+        await update.message.reply_text("❌ Supabase não está conectado.")
+        return
+
+    try:
+        resposta = (
+            supabase
+            .table("instagram_posts")
+            .select("id,status,manus_task_id,manus_task_url,caption")
+            .eq("status", "ready")
+            .order("id", desc=True)
+            .limit(1)
+            .execute()
+        )
+
+        if not resposta.data:
+            await update.message.reply_text("⚠️ Não existe nenhum carrossel pronto para reenviar.")
+            return
+
+        post = resposta.data[0]
+        post_id = int(post["id"])
+        task_id = str(post.get("manus_task_id") or "").strip()
+
+        if not task_id:
+            await update.message.reply_text(f"⚠️ O carrossel #{post_id} não possui tarefa Manus vinculada.")
+            return
+
+        from manus import listar_mensagens_tarefa
+        mensagens = await asyncio.to_thread(listar_mensagens_tarefa, task_id)
+        attachments = _extrair_attachments({}, mensagens)
+
+        if not attachments:
+            await update.message.reply_text(
+                f"❌ Não encontrei as imagens do carrossel #{post_id} na tarefa Manus.\n\n"
+                "Os anexos podem ter expirado ou não estar disponíveis."
+            )
+            return
+
+        enviado = await asyncio.to_thread(
+            _enviar_preview_telegram,
+            post_id,
+            {},
+            attachments,
+            str(post.get("caption") or ""),
+            str(post.get("manus_task_url") or "") or None,
+        )
+
+        if enviado:
+            await update.message.reply_text(
+                f"✅ Carrossel #{post_id} reenviado para o Telegram com os botões APROVAR/REPROVAR."
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ Não foi possível reenviar o carrossel #{post_id}."
+            )
+
+    except Exception as erro:
+        logger.exception("Erro no comando /reenviar_ultimo: %s", erro)
+        await update.message.reply_text(
+            f"❌ Erro ao reenviar o último carrossel:\n{str(erro)[:1500]}"
+        )
+
+
+# ============================================================
 # /STOP
 # ============================================================
 
@@ -2542,6 +2619,13 @@ def main():
         CommandHandler(
             "iniciar",
             comando_iniciar,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "reenviar_ultimo",
+            comando_reenviar_ultimo,
         )
     )
 
