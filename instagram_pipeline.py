@@ -60,7 +60,8 @@ def _persistir_attachments_storage(supabase: Client, post_id: int, attachments: 
         base_url = str(os.getenv("SUPABASE_URL") or "").rstrip("/")
         if not base_url:
             return salvos
-        for idx, attachment in enumerate(attachments):
+        slide_num = 0
+        for attachment in attachments:
             url = str(attachment.get("url") or "").strip()
             if not url.startswith(("http://", "https://")):
                 continue
@@ -79,7 +80,8 @@ def _persistir_attachments_storage(supabase: Client, post_id: int, attachments: 
                 elif "webp" in content_type: ext = ".webp"
                 elif "gif" in content_type: ext = ".gif"
                 elif "avif" in content_type: ext = ".avif"
-                caminho = f"{BOT_ID}/{post_id}/slide_{idx + 1:02d}{ext}"
+                slide_num += 1
+                caminho = f"{BOT_ID}/{post_id}/slide_{slide_num:02d}{ext}"
                 resultado = supabase.storage.from_("raposa-carrosseis").upload(
                     caminho,
                     resposta.content,
@@ -90,7 +92,7 @@ def _persistir_attachments_storage(supabase: Client, post_id: int, attachments: 
                     "storage_path": caminho,
                     "storage_url": public_url,
                     "content_type": content_type,
-                    "file_name": attachment.get("file_name") or f"slide_{idx + 1:02d}{ext}",
+                    "file_name": attachment.get("file_name") or f"slide_{slide_num:02d}{ext}",
                 })
                 logger.info("Imagem persistida no Storage: carrossel=%s slide=%s bytes=%s", post_id, idx + 1, len(resposta.content))
             except Exception:
