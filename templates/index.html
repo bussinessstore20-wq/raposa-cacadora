@@ -17,7 +17,7 @@
 <nav class="nav">
 <button class="active" data-view="dashboard">📊 Dashboard</button>
 <button data-view="carrosseis">🎨 Carrosséis</button>
-<button data-view="automacao">📦 Automação</button>
+<button data-view="automacao">📦 Automação</button><button data-view="historico">🧾 Histórico</button>
 <button data-view="config">⚙️ Configurações</button>
 </nav>
 <main class="content">
@@ -26,6 +26,7 @@
 <div class="stats">
 <div class="stat"><b id="sTotal">—</b><span>Carrosséis</span></div><div class="stat"><b id="sPending">—</b><span>Em criação</span></div><div class="stat"><b id="sReady">—</b><span>Aguardando aprovação</span></div><div class="stat"><b id="sApproved">—</b><span>Aprovados</span></div><div class="stat"><b id="sPublished">—</b><span>Publicados</span></div>
 </div>
+<div class="health" id="health"><div class="health-item">Supabase <span>…</span></div><div class="health-item">Telegram <span>…</span></div><div class="health-item">Manus <span>…</span></div><div class="health-item">Worker <span>…</span></div></div>
 <div class="grid2"><div class="info"><h3>🤖 Operação</h3><p id="opText">Carregando dados...</p></div><div class="info"><h3>📋 Fila</h3><p id="filaText">Carregando dados...</p></div></div>
 </section>
 <section id="carrosseis" class="view">
@@ -38,9 +39,20 @@
 <div class="hero"><div><h2>Automação</h2><p>Envie links da Shopee para a fila atual.</p></div></div>
 <div class="panel form"><label class="label">Produtos da Shopee</label><div id="links" class="links"></div><div class="form-actions"><button class="btn secondary" onclick="addLink()">＋ Produto</button><button class="btn" onclick="enviar()">🚀 Iniciar automação</button></div><div id="notice" class="notice"></div></div>
 </section>
+<section id="historico" class="view">
+<div class="hero"><div><h2>Histórico</h2><p>Auditoria das mudanças e ações do bot.</p></div><button class="refresh" onclick="carregarAuditoria()">↻ Atualizar</button></div>
+<div id="audit" class="audit"><div class="empty">Carregando histórico...</div></div>
+</section>
 <section id="config" class="view">
 <div class="hero"><div><h2>Configurações</h2><p>Informações do ambiente atual.</p></div></div>
 <div class="grid2"><div class="info"><h3>🦊 Bot atual</h3><p id="cfgBot">—</p></div><div class="info"><h3>🔐 Acesso</h3><p>O painel administrativo aceita somente o usuário Telegram configurado como administrador.</p></div></div>
+<div class="panel form" style="margin-top:10px">
+<label class="label">Intervalo entre produtos (minutos)</label>
+<input id="intervalo" type="number" min="1" max="1440" value="2" style="width:100%;background:#0c0e12;border:1px solid var(--line);color:white;border-radius:9px;padding:10px">
+<label style="display:flex;gap:8px;align-items:center;margin-top:10px;color:#c8cdd5;font-size:10px"><input id="ativo" type="checkbox"> Automação ativa</label>
+<div class="form-actions"><button class="btn" onclick="salvarConfig()">💾 Salvar</button><button class="btn secondary" onclick="controlar(false)">⏹️ Parar</button><button class="btn" onclick="controlar(true)">▶️ Iniciar</button></div>
+<div id="cfgNotice" class="notice"></div>
+</div>
 </section>
 </main>
 </div>
@@ -62,5 +74,6 @@ function addLink(){if(linksCount>=20)return;linksCount++;let d=document.createEl
 async function enviar(){let ls=[...document.querySelectorAll("#links input")].map(x=>x.value.trim()).filter(Boolean);let n=document.getElementById("notice");n.className="notice";if(!ls.length){n.textContent="Adicione pelo menos um link.";n.className="notice err";return}try{let r=await fetch("/api/configurar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({links:ls,intervalo:1200,quantidade:ls.length,initData:tg?.initData||"",user:tg?.initDataUnsafe?.user||null})});let d=await r.json();if(!r.ok)throw new Error(d.error||"Falha");n.textContent="✓ "+(d.mensagem||"Links enviados para a fila.");n.className="notice ok";carregar()}catch(e){n.textContent="❌ "+e.message;n.className="notice err"}}
 addLink(); carregar(); setInterval(carregar,15000);
 </script>
+<div id="modal" class="modal" onclick="if(event.target===this)fecharModal()"><div class="modal-box"><div class="modal-head"><h3 id="modalTitle">Carrossel</h3><button class="refresh" onclick="fecharModal()">Fechar</button></div><div id="modalBody"></div></div></div>
 </body>
 </html>
