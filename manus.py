@@ -39,8 +39,22 @@ def criar_tarefa_carrossel(produtos: list[dict[str, Any]], post_id: int) -> dict
 def detalhar_tarefa(task_id: str) -> dict[str, Any]:
     if not task_id:
         raise ManusAPIError("task_id ausente.")
-    response=requests.get(f"{MANUS_API_URL}/v2/task.detail",headers={"x-manus-api-key": MANUS_API_KEY},params={"task_id":task_id},timeout=60)
-    return _parse_response(response, "task.detail")
+    response=requests.get(
+        f"{MANUS_API_URL}/v2/task.detail",
+        headers={"x-manus-api-key": MANUS_API_KEY},
+        params={"task_id":task_id},
+        timeout=60,
+    )
+    data = _parse_response(response, "task.detail")
+    task = data.get("task")
+    if not isinstance(task, dict):
+        raise ManusAPIError("MANUS_TASK_NOT_FOUND: task.detail não retornou a tarefa.")
+    returned_id = str(task.get("id") or task.get("task_id") or "").strip()
+    if returned_id and returned_id != task_id:
+        raise ManusAPIError(
+            f"MANUS_TASK_MISMATCH: esperado={task_id} recebido={returned_id}"
+        )
+    return data
 
 def enviar_mensagem_tarefa(task_id: str, content: str) -> dict[str, Any]:
     if not task_id:
