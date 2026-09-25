@@ -841,11 +841,14 @@ class HealthHandler(
                     self._json_body(400, {"ok": False, "error": "limite_20_links"})
                     return
                 adicionados, duplicados, erros, ids = inserir_links(links)
-                if ids and len(ids) >= 2:
+                if ids and len(ids) >= 5:
                     try:
-                        criar_lote_instagram(supabase, ids, str(user["id"]), None)
-                    except Exception:
+                        post_id = criar_lote_instagram(supabase, ids, str(user["id"]), None, BOT_ID)
+                        logger.info("Web App criou lote Instagram #%s com %d produto(s).", post_id, len(ids))
+                    except Exception as exc:
                         logger.exception("Erro ao criar lote Instagram via Web App.")
+                        self._json_body(500, {"ok": False, "error": "falha_criar_lote", "detail": str(exc)[:500]})
+                        return
                 self._json_body(200, {
                     "ok": True,
                     "mensagem": f"{adicionados} produto(s) adicionado(s) à fila.",
