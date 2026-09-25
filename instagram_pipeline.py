@@ -117,7 +117,7 @@ def _normalizar_legenda(caption: str, produtos: list[dict[str, Any]]) -> str:
     return texto
 
 def criar_lote_instagram(supabase: Client, produto_ids: list[int], source_chat_id: str | None = None, source_message_id: int | None = None, bot_id: str | None = None) -> int | None:
-    if not INSTAGRAM_AUTO_BATCH or not produto_ids:
+    if not produto_ids:
         return None
     ids = list(dict.fromkeys(int(x) for x in produto_ids))
     bot_id = (bot_id or BOT_ID).strip()
