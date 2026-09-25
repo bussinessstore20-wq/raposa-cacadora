@@ -109,7 +109,12 @@ class handler(BaseHTTPRequestHandler):
                 self._send(502, {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"}, payload)
             return
 
-        if path.startswith("/api/status") or path.startswith("/api/dashboard") or path == "/webhook/manus":
+        if (path.startswith("/api/status")
+            or path.startswith("/api/dashboard")
+            or path.startswith("/api/carrossel/")
+            or path == "/api/audit"
+            or path == "/api/health"
+            or path == "/webhook/manus"):
             status, headers, body = proxy(path, "GET", headers=self.headers)
             self._send(status, headers, body)
             return
@@ -121,7 +126,7 @@ class handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
 
-        if path in ("/api/configurar", "/webhook/manus"):
+        if path in ("/api/configurar", "/api/carousel/action", "/api/settings", "/api/control", "/webhook/manus"):
             status, headers, response_body = proxy(path, "POST", body, self.headers)
             self._send(status, headers, response_body)
             return
