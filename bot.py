@@ -98,6 +98,7 @@ PORT = int(
 
 MAX_LINKS_POR_ENVIO = 20
 FILA_ORIGEM = "raposa-cacadora"
+BOT_ID = os.getenv("BOT_ID", FILA_ORIGEM).strip()
 
 # ============================================================
 # LOG
@@ -205,6 +206,7 @@ class HealthHandler(
                     .select("id,status")
                     .in_("id", ids)
                     .eq("fila_origem", FILA_ORIGEM)
+                    .eq("bot_id", BOT_ID)
                     .execute()
                 )
                 dados = dados.data
@@ -662,6 +664,7 @@ def inserir_links(
                         "link": link,
                         "status": "pending",
                         "fila_origem": FILA_ORIGEM,
+                        "bot_id": BOT_ID,
                     }
                 )
                 .execute()
@@ -900,6 +903,8 @@ def recuperar_processamentos_presos():
         .table("produtos_fila")
         .select("id")
         .eq("status", "processing")
+        .eq("fila_origem", FILA_ORIGEM)
+        .eq("bot_id", BOT_ID)
         .lt("processing_at", limite)
         .execute()
     )
@@ -921,6 +926,8 @@ def recuperar_processamentos_presos():
                 }
             )
             .eq("id", produto_id)
+            .eq("fila_origem", FILA_ORIGEM)
+            .eq("bot_id", BOT_ID)
             .eq("status", "processing")
             .execute()
         )
@@ -1861,8 +1868,9 @@ async def comando_reenviar_ultimo(
         resposta = (
             supabase
             .table("instagram_posts")
-            .select("id,status,manus_task_id,manus_task_url,caption")
+            .select("id,status,manus_task_id,manus_task_url,caption,bot_id")
             .eq("status", "ready")
+            .eq("bot_id", BOT_ID)
             .order("id", desc=True)
             .limit(1)
             .execute()
@@ -2027,8 +2035,9 @@ async def callback_controle(
         try:
             resultado = (
                 supabase.table("instagram_posts")
-                .select("id,manus_task_id,status")
+                .select("id,manus_task_id,status,bot_id")
                 .eq("id", post_id)
+                .eq("bot_id", BOT_ID)
                 .limit(1)
                 .execute()
             )
