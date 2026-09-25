@@ -2051,8 +2051,14 @@ async def callback_controle(
                 await query.answer("A tarefa Manus não está vinculada a este carrossel.", show_alert=True)
                 return
 
+            status_atual = str(post.get("status") or "").strip().lower()
+            if status_atual in {"approved", "rejected", "published"}:
+                await query.answer(f"Este carrossel já está com status: {status_atual}.", show_alert=True)
+                return
+
             aprovado = acao == "carousel_approve"
             decisao = "APROVADO" if aprovado else "REPROVADO"
+            novo_status = "approved" if aprovado else "rejected"
             instrucao = (
                 f"O carrossel #{post_id} foi APROVADO pelo administrador no Telegram. "
                 "Continue o fluxo e publique o carrossel no Instagram conforme as instruções originais."
@@ -2063,6 +2069,11 @@ async def callback_controle(
             )
 
             await asyncio.to_thread(enviar_mensagem_tarefa, task_id, instrucao)
+
+            supabase.table("instagram_posts").update({
+                "status": novo_status,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
 
             logger.info(
                 "Decisão %s enviada à tarefa Manus %s para o lote #%s.",
