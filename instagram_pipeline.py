@@ -53,6 +53,52 @@ def _legenda_valida(caption: str, quantidade: int) -> bool:
         return False
     return True
 
+def _persistir_attachments_storage(supabase: Client, post_id: int, attachments: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Baixa os anexos do Manus e os torna permanentes no Storage do Supabase."""
+    salvos = []
+    try:
+        base_url = str(os.getenv("SUPABASE_URL") or "").rstrip("/")
+        if not base_url:
+            return salvos
+        for idx, attachment in enumerate(attachments):
+            url = str(attachment.get("url") or "").strip()
+            if not url.startswith(("http://", "https://")):
+                continue
+            try:
+                resposta = requests.get(
+                    url,
+                    timeout=45,
+                    allow_redirects=True,
+                    headers={"User-Agent": "Mozilla/5.0 RaposaCacadora/1.0", "Accept": "image/*,*/*;q=0.8"},
+                )
+                content_type = (resposta.headers.get("Content-Type") or "").split(";", 1)[0].lower()
+                if not resposta.ok or not content_type.startswith("image/") or not resposta.content:
+                    continue
+                ext = ".jpg"
+                if "png" in content_type: ext = ".png"
+                elif "webp" in content_type: ext = ".webp"
+                elif "gif" in content_type: ext = ".gif"
+                elif "avif" in content_type: ext = ".avif"
+                caminho = f"{BOT_ID}/{post_id}/slide_{idx + 1:02d}{ext}"
+                resultado = supabase.storage.from_("raposa-carrosseis").upload(
+                    caminho,
+                    resposta.content,
+                    {"content-type": content_type, "upsert": "true"},
+                )
+                public_url = f"{base_url}/storage/v1/object/public/raposa-carrosseis/{caminho}"
+                salvos.append({
+                    "storage_path": caminho,
+                    "storage_url": public_url,
+                    "content_type": content_type,
+                    "file_name": attachment.get("file_name") or f"slide_{idx + 1:02d}{ext}",
+                })
+                logger.info("Imagem persistida no Storage: carrossel=%s slide=%s bytes=%s", post_id, idx + 1, len(resposta.content))
+            except Exception:
+                logger.exception("Falha ao persistir imagem Manus no Storage: carrossel=%s slide=%s", post_id, idx + 1)
+    except Exception:
+        logger.exception("Falha ao acessar o Storage do Supabase.")
+    return salvos
+
 def _normalizar_legenda(caption: str, produtos: list[dict[str, Any]]) -> str:
     texto = str(caption or "").strip()
     texto = re.sub(r"https?://\S+", "", texto)
@@ -474,6 +520,7 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
             if not isinstance(assets, list):
                 assets = []
             assets = [dict(item) if isinstance(item, dict) else {"asset_url": str(item)} for item in assets]
+            storage_assets = _persistir_attachments_storage(supabase, post_id, attachments)
             for idx, attachment in enumerate(attachments):
                 if idx >= len(assets):
                     assets.append({})
@@ -484,6 +531,9 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
                     assets[idx]["file_name"] = attachment["file_name"]
                 if attachment.get("content_type"):
                     assets[idx]["content_type"] = attachment["content_type"]
+                if idx < len(storage_assets):
+                    assets[idx]["storage_path"] = storage_assets[idx].get("storage_path")
+                    assets[idx]["storage_url"] = storage_assets[idx].get("storage_url")
             supabase.table("instagram_posts").update({"status": "ready", "category": value.get("category"), "caption": caption, "assets": assets, "manus_result": structured, "updated_at": _agora()}).eq("id", post_id).execute()
             enviados = _enviar_preview_telegram(post_id, detail, attachments, caption, str(detail.get("task_url") or "") or None, supabase)
             return True, "lote pronto e preview enviado ao Telegram" if enviados else "lote pronto; preview Telegram não enviado"
