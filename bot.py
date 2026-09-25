@@ -326,7 +326,7 @@ class HealthHandler(
                 )
                 produtos = (
                     supabase.table("produtos_fila")
-                    .select("id,product_name,link,status,image_url,created_at,updated_at")
+                    .select("id,product_name,link,status,image_url,created_at")
                     .eq("fila_origem", FILA_ORIGEM)
                     .eq("bot_id", BOT_ID)
                     .order("id", desc=True)
