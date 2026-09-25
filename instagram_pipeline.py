@@ -466,7 +466,25 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
             except Exception:
                 logger.exception("Não foi possível recuperar attachments da tarefa Manus %s", task_id)
             caption = _normalizar_legenda(caption, produtos)
-            supabase.table("instagram_posts").update({"status": "ready", "category": value.get("category"), "caption": caption, "assets": value.get("slides"), "manus_result": structured, "updated_at": _agora()}).eq("id", post_id).execute()
+            # Mantém os metadados gerados pelo Manus, mas também incorpora as URLs
+            # reais dos attachments recuperados. Isso evita que o painel fique
+            # dependente de caminhos locais como /home/ubuntu/... e permite que
+            # o preview seja servido imediatamente pelo backend.
+            assets = value.get("slides")
+            if not isinstance(assets, list):
+                assets = []
+            assets = [dict(item) if isinstance(item, dict) else {"asset_url": str(item)} for item in assets]
+            for idx, attachment in enumerate(attachments):
+                if idx >= len(assets):
+                    assets.append({})
+                assets[idx].setdefault("position", idx + 1)
+                if attachment.get("url"):
+                    assets[idx]["image_url"] = attachment["url"]
+                if attachment.get("file_name"):
+                    assets[idx]["file_name"] = attachment["file_name"]
+                if attachment.get("content_type"):
+                    assets[idx]["content_type"] = attachment["content_type"]
+            supabase.table("instagram_posts").update({"status": "ready", "category": value.get("category"), "caption": caption, "assets": assets, "manus_result": structured, "updated_at": _agora()}).eq("id", post_id).execute()
             enviados = _enviar_preview_telegram(post_id, detail, attachments, caption, str(detail.get("task_url") or "") or None, supabase)
             return True, "lote pronto e preview enviado ao Telegram" if enviados else "lote pronto; preview Telegram não enviado"
         except Exception as exc:
