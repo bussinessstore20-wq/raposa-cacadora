@@ -1854,6 +1854,7 @@ async def comando_status(
             .table("produtos_fila")
             .select("status")
             .eq("fila_origem", FILA_ORIGEM)
+            .eq("bot_id", BOT_ID)
             .execute()
         )
 
@@ -1956,6 +1957,7 @@ async def comando_fila(
                 "id,link,product_name,status,created_at"
             )
             .eq("fila_origem", FILA_ORIGEM)
+            .eq("bot_id", BOT_ID)
             .order("id", desc=False)
             .limit(100)
             .execute()
@@ -2062,6 +2064,7 @@ async def comando_erros(
                 "id,link,erro,tentativas"
             )
             .eq("fila_origem", FILA_ORIGEM)
+            .eq("bot_id", BOT_ID)
             .eq("status", "error")
             .order("id", desc=False)
             .limit(20)
@@ -2169,6 +2172,7 @@ async def comando_retry(
                 }
             )
             .eq("fila_origem", FILA_ORIGEM)
+            .eq("bot_id", BOT_ID)
             .eq("status", "error")
             .execute()
         )
