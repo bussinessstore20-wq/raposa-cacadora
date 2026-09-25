@@ -60,6 +60,7 @@
 <script>
 const tg=window.Telegram?.WebApp||null; if(tg){tg.ready();tg.expand();try{tg.setHeaderColor("#08090b");tg.setBackgroundColor("#08090b")}catch{}}
 let statusFiltro=""; let linksCount=0;
+async function api(url,opt={}){opt.headers={...(opt.headers||{}),...authHeaders()};let r=await fetch(url,opt),d=await r.json();if(!r.ok)throw new Error(d.error||"Erro de comunicação");return d;}
 document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>{document.querySelectorAll(".nav button").forEach(x=>x.classList.remove("active"));b.classList.add("active");document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));document.getElementById(b.dataset.view).classList.add("active");if(b.dataset.view==="carrosseis")carregar()});
 document.querySelectorAll(".filter").forEach(b=>b.onclick=()=>{document.querySelectorAll(".filter").forEach(x=>x.classList.remove("active"));b.classList.add("active");statusFiltro=b.dataset.status;carregar()});
 function authHeaders(){return {"Accept":"application/json","X-Telegram-Init-Data":tg?.initData||""}}
@@ -72,7 +73,7 @@ function render(d){let s=d.stats||{};document.getElementById("botPill").textCont
 function card(p){let task=p.manus_task_url?'<a href="'+esc(p.manus_task_url)+'" target="_blank" rel="noopener">Abrir Manus</a>':"";let ig=p.instagram_media_id?'<a href="https://www.instagram.com/p/'+encodeURIComponent(p.instagram_media_id)+'/" target="_blank" rel="noopener">Instagram</a>':"";return '<article class="card"><div class="card-head"><div><div class="id">Carrossel #'+esc(p.id)+'</div><div class="meta">'+esc(p.category||"Sem categoria")+' • criado '+esc(formatDate(p.created_at))+'</div></div>'+badge(p.status)+'</div>'+(p.caption?'<div class="caption">'+esc(p.caption)+'</div>':"")+(p.error?'<div class="caption" style="color:#ff8383">⚠️ '+esc(p.error)+'</div>':"")+'<div class="actions">'+task+ig+'</div></article>'}
 function addLink(){if(linksCount>=20)return;linksCount++;let d=document.createElement("div");d.className="linkrow";d.innerHTML='<input type="url" placeholder="https://s.shopee.com.br/...">';document.getElementById("links").appendChild(d)}
 async function enviar(){let ls=[...document.querySelectorAll("#links input")].map(x=>x.value.trim()).filter(Boolean);let n=document.getElementById("notice");n.className="notice";if(!ls.length){n.textContent="Adicione pelo menos um link.";n.className="notice err";return}try{let r=await fetch("/api/configurar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({links:ls,intervalo:1200,quantidade:ls.length,initData:tg?.initData||"",user:tg?.initDataUnsafe?.user||null})});let d=await r.json();if(!r.ok)throw new Error(d.error||"Falha");n.textContent="✓ "+(d.mensagem||"Links enviados para a fila.");n.className="notice ok";carregar()}catch(e){n.textContent="❌ "+e.message;n.className="notice err"}}
-addLink(); carregar(); setInterval(carregar,15000);
+addLink();
 </script>
 <div id="modal" class="modal" onclick="if(event.target===this)fecharModal()"><div class="modal-box"><div class="modal-head"><h3 id="modalTitle">Carrossel</h3><button class="refresh" onclick="fecharModal()">Fechar</button></div><div id="modalBody"></div></div></div>
 <script>
@@ -164,5 +165,6 @@ async function carregar(){
 document.querySelectorAll(".nav button").forEach(b=>b.addEventListener("click",()=>{if(b.dataset.view==="historico")carregarAuditoria()}));
 async function atualizarRaposa(){await carregar();window.setTimeout(atualizarRaposa,5000)}
 window.setTimeout(atualizarRaposa,5000);
+window.setTimeout(()=>carregar(),0);
 </script></body>
 </html>
