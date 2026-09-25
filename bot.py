@@ -361,10 +361,17 @@ class HealthHandler(
                         self._json_body(403, {"ok": False, "error": "usuario_nao_autorizado"}); return
                     post_id = int(partes_carrossel[2]); indice = int(partes_carrossel[4])
                     if indice < 0 or indice > 30: self._json_body(400, {"ok": False, "error": "indice_invalido"}); return
-                    row = supabase.table("instagram_posts").select("id,bot_id,manus_task_id,assets").eq("id", post_id).eq("bot_id", BOT_ID).limit(1).execute().data
+                    row = []
+                    for tentativa in range(3):
+                        try:
+                            row = supabase.table("instagram_posts").select("id,bot_id,manus_task_id,assets").eq("id", post_id).eq("bot_id", BOT_ID).limit(1).execute().data
+                            break
+                        except Exception as exc:
+                            logger.warning("Supabase indisponível ao carregar carrossel=%s tentativa=%s: %s", post_id, tentativa + 1, exc)
+                            time.sleep(0.5 * (tentativa + 1))
                     if not row: self._json_body(404, {"ok": False, "error": "carrossel_nao_encontrado"}); return
                     post = row[0]; assets = post.get("assets") or []; asset = assets[indice] if isinstance(assets, list) and indice < len(assets) else None
-                    file_id = asset.get("telegram_file_id") if isinstance(asset, dict) else None; image_url = None
+                    file_id = asset.get("telegram_file_id") if isinstance(asset, dict) else None; image_url = None; image_bytes = None; image_content_type = None
                     if isinstance(asset, dict):
                         for key in ("image_url", "file_url", "download_url", "url"):
                             value = str(asset.get(key) or "").strip()
@@ -414,6 +421,9 @@ class HealthHandler(
                                     content_type = (teste.headers.get("Content-Type") or "").split(";", 1)[0].lower()
                                     if teste.ok and content_type.startswith("image/") and teste.content:
                                         image_url = candidato_url
+                                        image_bytes = teste.content
+                                        image_content_type = content_type
+                                        logger.info("Imagem Manus recuperada: carrossel=%s slide=%s bytes=%s", post_id, indice + 1, len(image_bytes))
                                         break
                                     if teste.ok and content_type in {"text/plain", "text/html", "text/markdown", ""}:
                                         encontrados = []
@@ -433,6 +443,9 @@ class HealthHandler(
                                                 tipo2 = (teste2.headers.get("Content-Type") or "").split(";", 1)[0].lower()
                                                 if teste2.ok and tipo2.startswith("image/") and teste2.content:
                                                     image_url = url2
+                                                    image_bytes = teste2.content
+                                                    image_content_type = tipo2
+                                                    logger.info("Imagem Manus recuperada por URL interna: carrossel=%s slide=%s bytes=%s", post_id, indice + 1, len(image_bytes))
                                                     break
                                             except Exception:
                                                 continue
@@ -467,15 +480,30 @@ class HealthHandler(
                                     tipo = (teste.headers.get("Content-Type") or "").split(";", 1)[0].lower()
                                     if teste.ok and tipo.startswith("image/") and teste.content:
                                         image_url = original_url
+                                        image_bytes = teste.content
+                                        image_content_type = tipo
+                                        logger.info("Imagem original do produto usada como fallback: carrossel=%s slide=%s produto=%s bytes=%s", post_id, indice + 1, product_id, len(image_bytes))
                             except Exception:
                                 logger.exception("Falha no fallback da imagem original do produto #%s.", product_id)
 
-                    if not image_url: self._json_body(404, {"ok": False, "error": "imagem_nao_disponivel"}); return
-                    imagem = requests.get(image_url, timeout=30)
-                    if not imagem.ok: self._json_body(404, {"ok": False, "error": "falha_ao_baixar_imagem"}); return
-                    content_type = imagem.headers.get("Content-Type", "image/jpeg").split(";")[0]
+                    if not image_bytes and image_url:
+                        for tentativa in range(3):
+                            try:
+                                imagem = requests.get(image_url, timeout=30, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0 RaposaCacadora/1.0", "Accept": "image/*,*/*;q=0.8"})
+                                tipo_final = (imagem.headers.get("Content-Type") or "").split(";", 1)[0].lower()
+                                if imagem.ok and tipo_final.startswith("image/") and imagem.content:
+                                    image_bytes = imagem.content
+                                    image_content_type = tipo_final
+                                    break
+                            except Exception as exc:
+                                logger.warning("Falha no download final da imagem carrossel=%s slide=%s tentativa=%s: %s", post_id, indice + 1, tentativa + 1, exc)
+                            time.sleep(0.5 * (tentativa + 1))
+                    if not image_bytes:
+                        logger.warning("Imagem indisponível: carrossel=%s slide=%s task=%s asset=%s", post_id, indice + 1, post.get("manus_task_id"), asset)
+                        self._json_body(404, {"ok": False, "error": "imagem_nao_disponivel"}); return
+                    content_type = image_content_type or "image/jpeg"
                     if not content_type.startswith("image/"): content_type = "image/jpeg"
-                    self.send_response(200); self.send_header("Content-Type", content_type); self.send_header("Cache-Control", "private, max-age=300"); self.send_header("Content-Length", str(len(imagem.content))); self.end_headers(); self.wfile.write(imagem.content)
+                    self.send_response(200); self.send_header("Content-Type", content_type); self.send_header("Cache-Control", "private, max-age=300"); self.send_header("Content-Length", str(len(image_bytes))); self.end_headers(); self.wfile.write(image_bytes)
                 except (ValueError, IndexError): self._json_body(400, {"ok": False, "error": "imagem_invalida"})
                 except Exception as erro: logger.exception("Erro ao servir imagem do carrossel: %s", erro); self._json_body(500, {"ok": False, "error": "internal_error"})
                 return
