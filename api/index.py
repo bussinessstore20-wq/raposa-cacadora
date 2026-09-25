@@ -115,7 +115,7 @@ class handler(BaseHTTPRequestHandler):
             or path == "/api/audit"
             or path == "/api/health"
             or path == "/webhook/manus"):
-            status, headers, body = proxy(path, "GET", headers=self.headers)
+            status, headers, body = proxy(self.path, "GET", headers=self.headers)
             self._send(status, headers, body)
             return
 
