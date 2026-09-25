@@ -903,6 +903,8 @@ def recuperar_processamentos_presos():
         .table("produtos_fila")
         .select("id")
         .eq("status", "processing")
+        .eq("fila_origem", FILA_ORIGEM)
+        .eq("bot_id", BOT_ID)
         .lt("processing_at", limite)
         .execute()
     )
@@ -924,6 +926,8 @@ def recuperar_processamentos_presos():
                 }
             )
             .eq("id", produto_id)
+            .eq("fila_origem", FILA_ORIGEM)
+            .eq("bot_id", BOT_ID)
             .eq("status", "processing")
             .execute()
         )
