@@ -21,7 +21,7 @@
 <button data-view="carrosseis">🎨 Carrosséis</button>
 <button data-view="produtos">📦 Produtos</button>
 <button data-view="resultados">📈 Resultados</button>
-<button data-view="historico">🧾 Histórico</button><button data-view="diagnostico">🧪 Diagnóstico</button>
+<button data-view="historico">🧾 Histórico</button>
 <button data-view="config">⚙️ Configurações</button>
 </nav><div class="nav-backdrop" id="navBackdrop"></div>
 <main class="content">
@@ -57,14 +57,6 @@
 <div class="hero"><div><div class="eyebrow">Rastreamento</div><h2>Histórico</h2><p>Tudo que mudou na operação.</p></div><button class="refresh" onclick="carregarAuditoria()">↻ Atualizar</button></div>
 <div id="audit" class="audit"><div class="empty">Carregando...</div></div>
 </section>
-<section id="diagnostico" class="view">
-<div class="hero"><div><div class="eyebrow">Debug</div><h2>Diagnóstico</h2><p>Teste a comunicação do painel e veja o último erro técnico.</p></div><button class="refresh" onclick="carregarDiagnostico()">↻ Testar agora</button></div>
-<div class="grid2">
-<div class="info"><h3>🔌 Conexão</h3><p id="diagConnection">Aguardando teste...</p></div>
-<div class="info"><h3>📋 Última resposta</h3><p id="diagResponse">Aguardando teste...</p></div>
-</div>
-<div class="section"><div class="section-head"><h3>Logs do teste</h3><span id="diagTime">—</span></div><div id="diagLogs" class="audit"><div class="empty">Clique em “Testar agora”.</div></div></div>
-</section>
 <section id="config" class="view">
 <div class="hero"><div><div class="eyebrow">Controle</div><h2>Configurações</h2><p>Controle o ritmo da automação sem mexer no restante do sistema.</p></div></div>
 <div class="grid2"><div class="info"><h3>🦊 Bot</h3><p id="cfgBot">—</p><div id="cfgRuntime" style="margin-top:9px;color:#69dda0;font-size:9px">—</div></div><div class="info"><h3>🔐 Segurança</h3><p>Painel protegido pelo Telegram Web App. Ações operacionais exigem autenticação do administrador.</p></div></div>
@@ -80,26 +72,6 @@ async function api(url,opt={}){opt.headers={...(opt.headers||{}),...authHeaders(
 function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m]))}
 function label(s){return({pending:"Em produção",manus_processing:"Manus processando",ready:"Aguardando aprovação",approved:"Aprovado",publishing:"Publicando",published:"Publicado",rejected:"Reprovado",error:"Erro"}[s]||s||"Desconhecido")}
 function badge(s){let c=s==="ready"?"b-ready":s==="approved"||s==="published"?"b-approved":s==="rejected"||s==="error"?"b-error":s==="pending"||s==="manus_processing"?"b-processing":"";return'<span class="badge '+c+'">'+esc(label(s))+"</span>"}
-async function carregarDiagnostico(){
- const box=document.getElementById("diagLogs"),conn=document.getElementById("diagConnection"),resp=document.getElementById("diagResponse"),tm=document.getElementById("diagTime");
- const logs=[]; const add=(msg,ok=false)=>{logs.push({msg,ok,time:new Date().toLocaleTimeString("pt-BR")});box.innerHTML=logs.map(x=>'<div class="audit-row"><b>'+esc(x.time)+' '+(x.ok?'✅':'ℹ️')+' '+esc(x.msg)+'</b></div>').join("")};
- add("Iniciando diagnóstico do painel");
- try{
-   add("Enviando GET /api/diagnostico");
-   const r=await fetch("/api/diagnostico",{headers:authHeaders()});
-   add("HTTP "+r.status+(r.ok?" — resposta recebida":" — erro HTTP"));
-   const d=await r.json();
-   conn.innerHTML=d.ok?"🟢 Backend alcançado em "+esc(d.proxy?.tempo_ms)+" ms":"🔴 Backend não alcançado";
-   resp.innerHTML="HTTP "+esc(d.proxy?.backend_status)+" • initData="+(d.proxy?.vercel_recebeu_init_data?"presente":"ausente");
-   if(d.proxy?.vercel_recebeu_init_data) add("Telegram Init Data recebido",true); else add("Telegram Init Data ausente");
-   if(d.proxy?.backend_alcancado) add("Render respondeu: HTTP "+d.proxy.backend_status,true); else add("Render não respondeu");
-   if(d.backend?.error) add("ERRO DO BACKEND: "+d.backend.error);
-   if(d.erro_proxy) add("ERRO DO PROXY: "+d.erro_proxy);
-   if(d.backend?.runtime) add("Runtime: "+JSON.stringify(d.backend.runtime));
-   if(d.backend?.stats) add("Stats recebidos: "+JSON.stringify(d.backend.stats),true);
-   tm.textContent=new Date().toLocaleString("pt-BR");
- }catch(e){conn.innerHTML="🔴 Falha no diagnóstico";resp.innerHTML=esc(e.message);add("ERRO: "+e.message)}
-}
 function formatDate(v){if(!v)return"—";try{return new Date(v).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"})}catch{return v}}
 document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>{document.querySelectorAll(".nav button").forEach(x=>x.classList.remove("active"));b.classList.add("active");document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));document.getElementById(b.dataset.view).classList.add("active");toggleMenu(false);if(b.dataset.view==="historico")carregarAuditoria();if(b.dataset.view==="carrosseis"||b.dataset.view==="produtos"||b.dataset.view==="resultados")carregar()});
 document.querySelectorAll(".filter").forEach(b=>b.onclick=()=>{document.querySelectorAll(".filter").forEach(x=>x.classList.remove("active"));b.classList.add("active");statusFiltro=b.dataset.status;carregar()});
