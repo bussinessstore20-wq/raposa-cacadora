@@ -126,10 +126,10 @@ class handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
 
-        if path in ("/api/configurar", "/api/carousel/action", "/api/index.py", "/api/settings", "/api/control", "/webhook/manus"):
-            # /api/index.py is a stable direct Vercel function entrypoint used by the approval UI.
-            # It avoids the custom nested route that was returning 404 in production.
-            if path == "/api/index.py":
+        if path in ("/api/configurar", "/api/carousel/action", "/api/dashboard", "/api/index.py", "/api/settings", "/api/control", "/webhook/manus"):
+            # /api/dashboard is a known-working Vercel route used as the stable POST entrypoint for approval actions.
+            # It avoids the custom nested route and direct .py path that returned 404 in production.
+            if path in ("/api/index.py", "/api/dashboard"):
                 try:
                     payload = json.loads(body.decode("utf-8") or "{}")
                 except Exception:
