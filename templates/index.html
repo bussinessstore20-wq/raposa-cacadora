@@ -40,7 +40,6 @@ body{background:radial-gradient(900px 420px at 65% -10%,rgba(255,106,0,.16),tran
 </div>
 <div class="health" id="health"><div class="health-item">Supabase <span>…</span></div><div class="health-item">Telegram <span>…</span></div><div class="health-item">Manus <span>…</span></div><div class="health-item">Worker <span>…</span></div></div>
 <div class="grid2"><div class="info"><h3>🤖 Operação</h3><p id="opText">Carregando dados...</p></div><div class="info"><h3>📋 Fila</h3><p id="filaText">Carregando dados...</p></div></div>
-<div class="panel" style="margin-top:10px"><div class="card-head"><div><h3 style="margin:0">⚡ Atividade recente</h3><small style="color:var(--muted)">Atualizada automaticamente</small></div><button class="refresh" onclick="carregar()">↻</button></div><div id="activity" class="audit"><div class="empty">Carregando atividade...</div></div></div>
 </section>
 <section id="carrosseis" class="view">
 <div class="hero"><div><h2>Carrosséis</h2><p>Histórico e status separados por bot.</p></div><button class="refresh" onclick="carregar()">↻ Atualizar</button></div>
@@ -128,11 +127,6 @@ function render(d){
   document.getElementById("cards").innerHTML=(d.posts||[]).length?d.posts.map(card).join(""):'<div class="empty">Nenhum carrossel encontrado.</div>';
   renderHealth(d);
   if(document.getElementById("audit"))renderAudit(d.audit||[]);
-  if(document.getElementById("activity"))renderActivity(d.audit||[]);
-}
-function renderActivity(items){
-  const el=document.getElementById("activity"); if(!el)return;
-  el.innerHTML=items.length?items.slice(0,8).map(x=>'<div class="audit-row"><b>'+esc(x.action)+(x.entity_id?" • #"+esc(x.entity_id):"")+'</b><small>'+esc(formatDate(x.created_at))+(x.new_status?" • "+esc(x.new_status):"")+'</small></div>').join(""):'<div class="empty">Nenhuma atividade registrada.</div>';
 }
 function card(p){
   let task=p.manus_task_url?'<a href="'+esc(p.manus_task_url)+'" target="_blank" rel="noopener">Manus</a>':"";
