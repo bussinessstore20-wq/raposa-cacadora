@@ -113,5 +113,39 @@ function card(p){
   if(p.status==="error")a+='<button onclick="acaoPainel('+p.id+',\'retry\')">🔄 Reprocessar</button>';
   return '<article class="card"><div class="card-head"><div><div class="id">Carrossel #'+esc(p.id)+'</div><div class="meta">'+esc(p.category||"Sem categoria")+' • criado '+esc(formatDate(p.created_at))+'</div></div>'+badge(p.status)+'</div>'+(p.caption?'<div class="caption">'+esc(p.caption)+'</div>':"")+(p.error?'<div class="caption" style="color:#ff8383">⚠️ '+esc(p.error)+'</div>':"")+'<div class="actions">'+a+task+ig+'</div></article>';
 }
+</script><script>
+async function acaoPainel(id,action){
+  if((action==="approve"||action==="reject")&&!confirm(action==="approve"?"Aprovar este carrossel e enviar a decisão ao Manus?":"Reprovar este carrossel e impedir a publicação?"))return;
+  try{
+    let d=await api("/api/carousel/action",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({post_id:id,action,initData:tg?.initData||""})});
+    alert("✓ "+(d.message||"Operação concluída"));carregar();
+  }catch(e){alert("❌ "+e.message)}
+}
+async function abrirCarrossel(id){
+  try{
+    let d=await api("/api/carrossel/"+id);
+    document.getElementById("modalTitle").textContent="Carrossel #"+id+" — "+label(d.post?.status);
+    document.getElementById("modalBody").innerHTML='<div class="caption">'+esc(d.post?.caption||"Sem legenda")+'</div><div class="timeline">'+(d.timeline||[]).map(x=>'<div class="time"><b>'+esc(x.action)+(x.old_status?" ("+esc(x.old_status)+" → "+esc(x.new_status||"")+")":"")+'</b><small>'+esc(formatDate(x.created_at))+(x.details?.error?" • "+esc(x.details.error):"")+'</small></div>').join("")+'</div>';
+    document.getElementById("modal").classList.add("show");
+  }catch(e){alert("❌ "+e.message)}
+}
+function fecharModal(){document.getElementById("modal").classList.remove("show")}
+function renderAudit(items){
+  document.getElementById("audit").innerHTML=items.length?items.map(x=>'<div class="audit-row"><b>'+esc(x.action)+" • "+esc(x.entity_type)+(x.entity_id?" #"+esc(x.entity_id):"")+'</b><small>'+esc(formatDate(x.created_at))+(x.old_status?" • "+esc(x.old_status)+" → "+esc(x.new_status||""):"")+'</small></div>').join(""):'<div class="empty">Nenhum evento ainda.</div>';
+}
+async function carregarAuditoria(){
+  try{let d=await api("/api/audit");renderAudit(d.items||[])}
+  catch(e){document.getElementById("audit").innerHTML='<div class="empty">⚠️ '+esc(e.message)+'</div>'}
+}
+async function salvarConfig(){
+  try{
+    await api("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({intervalo_minutos:Number(document.getElementById("intervalo").value),automacao_ativa:document.getElementById("ativo").checked,initData:tg?.initData||""})});
+    document.getElementById("cfgNotice").textContent="✓ Configurações salvas.";document.getElementById("cfgNotice").className="notice ok";document.getElementById("cfgNotice").style.display="block";carregar();
+  }catch(e){document.getElementById("cfgNotice").textContent="❌ "+e.message;document.getElementById("cfgNotice").className="notice err";document.getElementById("cfgNotice").style.display="block"}
+}
+async function controlar(ativo){
+  try{await api("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ativo,initData:tg?.initData||""})});document.getElementById("ativo").checked=ativo;carregar()}
+  catch(e){alert("❌ "+e.message)}
+}
 </script></body>
 </html>
