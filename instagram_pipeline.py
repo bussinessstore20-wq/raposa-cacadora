@@ -54,51 +54,113 @@ def _legenda_valida(caption: str, quantidade: int) -> bool:
     return True
 
 def _persistir_attachments_storage(supabase: Client, post_id: int, attachments: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Baixa os anexos do Manus e os torna permanentes no Storage do Supabase."""
+    """Baixa todos os anexos de imagem do Manus e os torna permanentes no Storage."""
     salvos = []
-    try:
-        base_url = str(os.getenv("SUPABASE_URL") or "").rstrip("/")
-        if not base_url:
-            return salvos
-        slide_num = 0
-        for attachment in attachments:
-            url = str(attachment.get("url") or "").strip()
-            if not url.startswith(("http://", "https://")):
-                continue
-            try:
-                resposta = requests.get(
-                    url,
-                    timeout=45,
-                    allow_redirects=True,
-                    headers={"User-Agent": "Mozilla/5.0 RaposaCacadora/1.0", "Accept": "image/*,*/*;q=0.8"},
-                )
-                content_type = (resposta.headers.get("Content-Type") or "").split(";", 1)[0].lower()
-                if not resposta.ok or not content_type.startswith("image/") or not resposta.content:
-                    continue
+    base_url = str(os.getenv("SUPABASE_URL") or "").rstrip("/")
+    if not base_url:
+        logger.warning("Storage não persistido: SUPABASE_URL ausente.")
+        return salvos
+
+    for attachment_index, attachment in enumerate(attachments, start=1):
+        url = str(attachment.get("url") or "").strip()
+        if not url.startswith(("http://", "https://")):
+            logger.warning(
+                "Anexo ignorado no carrossel #%s: URL ausente/inválida (anexo %s).",
+                post_id, attachment_index,
+            )
+            continue
+
+        try:
+            resposta = requests.get(
+                url,
+                timeout=60,
+                allow_redirects=True,
+                headers={
+                    "User-Agent": "Mozilla/5.0 RaposaCacadora/1.0",
+                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                },
+            )
+            resposta.raise_for_status()
+
+            content_type = (
+                (resposta.headers.get("Content-Type") or "")
+                .split(";", 1)[0]
+                .strip()
+                .lower()
+            )
+
+            # O Manus pode devolver uma página intermediária com a URL real.
+            if not content_type.startswith("image/"):
+                try:
+                    conteudo = resposta.content.decode("utf-8", errors="ignore")
+                    candidatos = _extrair_urls_de_conteudo_manus(conteudo, resposta.url)
+                    for candidato in candidatos:
+                        try:
+                            resposta_real = requests.get(
+                                candidato,
+                                timeout=60,
+                                allow_redirects=True,
+                                headers={
+                                    "User-Agent": "Mozilla/5.0 RaposaCacadora/1.0",
+                                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                                },
+                            )
+                            tipo_real = (
+                                (resposta_real.headers.get("Content-Type") or "")
+                                .split(";", 1)[0]
+                                .strip()
+                                .lower()
+                            )
+                            if resposta_real.ok and tipo_real.startswith("image/") and resposta_real.content:
+                                resposta = resposta_real
+                                content_type = tipo_real
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            if not content_type.startswith("image/") or not resposta.content:
+                raise RuntimeError(f"conteúdo não é imagem: {content_type or 'content-type ausente'}")
+
+            if "png" in content_type:
+                ext = ".png"
+            elif "webp" in content_type:
+                ext = ".webp"
+            elif "gif" in content_type:
+                ext = ".gif"
+            elif "avif" in content_type:
+                ext = ".avif"
+            elif "jpeg" in content_type or "jpg" in content_type:
                 ext = ".jpg"
-                if "png" in content_type: ext = ".png"
-                elif "webp" in content_type: ext = ".webp"
-                elif "gif" in content_type: ext = ".gif"
-                elif "avif" in content_type: ext = ".avif"
-                slide_num += 1
-                caminho = f"{BOT_ID}/{post_id}/slide_{slide_num:02d}{ext}"
-                resultado = supabase.storage.from_("raposa-carrosseis").upload(
-                    caminho,
-                    resposta.content,
-                    {"content-type": content_type, "upsert": "true"},
-                )
-                public_url = f"{base_url}/storage/v1/object/public/raposa-carrosseis/{caminho}"
-                salvos.append({
-                    "storage_path": caminho,
-                    "storage_url": public_url,
-                    "content_type": content_type,
-                    "file_name": attachment.get("file_name") or f"slide_{slide_num:02d}{ext}",
-                })
-                logger.info("Imagem persistida no Storage: carrossel=%s slide=%s bytes=%s", post_id, idx + 1, len(resposta.content))
-            except Exception:
-                logger.exception("Falha ao persistir imagem Manus no Storage: carrossel=%s slide=%s", post_id, idx + 1)
-    except Exception:
-        logger.exception("Falha ao acessar o Storage do Supabase.")
+            else:
+                ext = ".jpg"
+
+            caminho = f"{BOT_ID}/{post_id}/slide_{attachment_index:02d}{ext}"
+            supabase.storage.from_("raposa-carrosseis").upload(
+                caminho,
+                resposta.content,
+                {"content-type": content_type, "upsert": "true"},
+            )
+
+            public_url = f"{base_url}/storage/v1/object/public/raposa-carrosseis/{caminho}"
+            salvos.append({
+                "attachment_index": attachment_index,
+                "storage_path": caminho,
+                "storage_url": public_url,
+                "content_type": content_type,
+                "file_name": attachment.get("file_name") or f"slide_{attachment_index:02d}{ext}",
+            })
+            logger.info(
+                "Imagem persistida no Storage: carrossel=%s anexo=%s bytes=%s",
+                post_id, attachment_index, len(resposta.content),
+            )
+        except Exception as exc:
+            logger.exception(
+                "Falha ao persistir imagem Manus: carrossel=%s anexo=%s erro=%s",
+                post_id, attachment_index, exc,
+            )
+
     return salvos
 
 def _normalizar_legenda(caption: str, produtos: list[dict[str, Any]]) -> str:
