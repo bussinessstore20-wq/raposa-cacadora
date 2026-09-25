@@ -605,7 +605,7 @@ def validar_telegram_webapp(init_data: str) -> bool:
         recebido = params.pop("hash", "")
         if not recebido:
             return False
-        data_check_string = "\\n".join(f"{k}={params[k]}" for k in sorted(params))
+        data_check_string = "\n".join(f"{k}={params[k]}" for k in sorted(params))
         secret_key = hmac.new(b"WebAppData", TELEGRAM_TOKEN.encode("utf-8"), hashlib.sha256).digest()
         calculado = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
         return hmac.compare_digest(calculado, recebido)
