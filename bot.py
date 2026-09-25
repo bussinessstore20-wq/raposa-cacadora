@@ -225,6 +225,69 @@ def registrar_auditoria(action, entity_type="system", entity_id=None, old_status
         logger.exception("Falha ao registrar auditoria: %s", action)
 
 
+def _persistir_imagem_carrossel_storage(post_id: int, indice: int, image_bytes: bytes, content_type: str, file_name: str = "") -> dict[str, str]:
+    """Torna permanente uma imagem recuperada sob demanda e atualiza o asset do lote."""
+    if not image_bytes or supabase is None or not SUPABASE_URL:
+        return {}
+
+    tipo = (content_type or "image/jpeg").split(";", 1)[0].strip().lower()
+    extensao = {
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "image/avif": ".avif",
+        "image/jpeg": ".jpg",
+    }.get(tipo, ".jpg")
+    nome = Path(file_name or "").name or f"slide_{indice + 1:02d}{extensao}"
+    caminho = f"{BOT_ID}/{post_id}/slide_{indice + 1:02d}{extensao}"
+
+    try:
+        supabase.storage.from_("raposa-carrosseis").upload(
+            caminho,
+            image_bytes,
+            {"content-type": tipo, "upsert": "true"},
+        )
+        storage_url = f"{SUPABASE_URL.rstrip('/')}/storage/v1/object/public/raposa-carrosseis/{caminho}"
+
+        row = (
+            supabase.table("instagram_posts")
+            .select("assets")
+            .eq("id", post_id)
+            .eq("bot_id", BOT_ID)
+            .limit(1)
+            .execute()
+        ).data or []
+        if row and isinstance(row[0].get("assets"), list):
+            assets = [dict(item) if isinstance(item, dict) else {"asset_url": str(item)} for item in row[0]["assets"]]
+            while len(assets) <= indice:
+                assets.append({})
+            assets[indice]["storage_path"] = caminho
+            assets[indice]["storage_url"] = storage_url
+            assets[indice]["content_type"] = tipo
+            assets[indice]["file_name"] = assets[indice].get("file_name") or nome
+            supabase.table("instagram_posts").update({
+                "assets": assets,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
+
+        logger.info(
+            "Imagem recuperada sob demanda e persistida no Storage: carrossel=%s slide=%s bytes=%s",
+            post_id, indice + 1, len(image_bytes),
+        )
+        return {
+            "storage_path": caminho,
+            "storage_url": storage_url,
+            "file_name": nome,
+            "content_type": tipo,
+        }
+    except Exception:
+        logger.exception(
+            "Falha ao persistir imagem recuperada no Storage: carrossel=%s slide=%s",
+            post_id, indice + 1,
+        )
+        return {}
+
+
 # ============================================================
 # SERVIDOR HTTP PARA O RENDER
 # ============================================================
@@ -415,14 +478,19 @@ class HealthHandler(
                                 image_bytes = teste.content
                                 image_content_type = tipo
                                 logger.info("Imagem persistida recuperada do Storage: carrossel=%s slide=%s bytes=%s", post_id, indice + 1, len(image_bytes))
+                            else:
+                                # Storage pode ter URL salva mas objeto removido/expirado.
+                                # Nesse caso, libera o fallback para Telegram/Manus.
+                                image_url = None
                         except Exception:
+                            image_url = None
                             logger.exception("Falha ao recuperar imagem persistida do Storage: carrossel=%s slide=%s", post_id, indice + 1)
                     if image_bytes:
                         pass
                     elif file_id and TELEGRAM_TOKEN:
                         resposta = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile", params={"file_id": file_id}, timeout=20); dados = resposta.json() if resposta.ok else {}; file_path = ((dados.get("result") or {}).get("file_path") or "").strip()
                         if file_path: image_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
-                    if not image_url and post.get("manus_task_id"):
+                    if not image_bytes and post.get("manus_task_id"):
                         try:
                             mensagens = listar_mensagens_tarefa(str(post["manus_task_id"]))
                             # Reutiliza exatamente a mesma extração de anexos usada
@@ -564,6 +632,15 @@ class HealthHandler(
                             except Exception as exc:
                                 logger.warning("Falha no download final da imagem carrossel=%s slide=%s tentativa=%s: %s", post_id, indice + 1, tentativa + 1, exc)
                             time.sleep(0.5 * (tentativa + 1))
+                    if image_bytes and not (isinstance(asset, dict) and str(asset.get("storage_url") or "").startswith(("http://", "https://"))):
+                        _persistir_imagem_carrossel_storage(
+                            post_id,
+                            indice,
+                            image_bytes,
+                            image_content_type or "image/jpeg",
+                            str((asset or {}).get("file_name") or "") if isinstance(asset, dict) else "",
+                        )
+
                     if not image_bytes:
                         logger.warning("Imagem indisponível: carrossel=%s slide=%s task=%s asset=%s", post_id, indice + 1, post.get("manus_task_id"), asset)
                         self._json_body(404, {"ok": False, "error": "imagem_nao_disponivel"}); return
