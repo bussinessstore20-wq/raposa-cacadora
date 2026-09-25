@@ -22,6 +22,7 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    WebAppInfo,
 )
 from telegram.constants import ParseMode
 from cryptography.hazmat.primitives import hashes, serialization
@@ -70,6 +71,11 @@ TELEGRAM_CHAT_ID = os.getenv(
 TELEGRAM_ADMIN_ID = os.getenv(
     "TELEGRAM_ADMIN_ID",
     "",
+).strip()
+
+WEBAPP_URL = os.getenv(
+    "WEBAPP_URL",
+    "https://raposa-cacadora-roan.vercel.app/",
 ).strip()
 
 SUPABASE_URL = os.getenv(
@@ -1501,6 +1507,12 @@ def teclado_controle():
 
     return InlineKeyboardMarkup(
         [
+            [
+                InlineKeyboardButton(
+                    "📊 ABRIR PAINEL",
+                    web_app=WebAppInfo(url=WEBAPP_URL),
+                ),
+            ],
             [
                 InlineKeyboardButton(
                     "▶️ INICIAR",
