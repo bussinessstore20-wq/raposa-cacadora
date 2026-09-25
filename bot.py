@@ -372,13 +372,19 @@ class HealthHandler(
                     if not row: self._json_body(404, {"ok": False, "error": "carrossel_nao_encontrado"}); return
                     post = row[0]; assets = post.get("assets") or []; asset = assets[indice] if isinstance(assets, list) and indice < len(assets) else None
                     file_id = asset.get("telegram_file_id") if isinstance(asset, dict) else None; image_url = None; image_bytes = None; image_content_type = None
+                    storage_url = ""
                     if isinstance(asset, dict):
                         storage_url = str(asset.get("storage_url") or "").strip()
+                        # Storage do Supabase é a fonte permanente e deve ter prioridade.
+                        # Nunca sobrescrever uma URL persistente por uma URL temporária do Manus.
                         if storage_url.startswith(("http://", "https://")):
                             image_url = storage_url
-                        for key in ("image_url", "file_url", "download_url", "url"):
-                            value = str(asset.get(key) or "").strip()
-                            if value.startswith(("http://", "https://")): image_url = value; break
+                        elif not image_url:
+                            for key in ("image_url", "file_url", "download_url", "url"):
+                                value = str(asset.get(key) or "").strip()
+                                if value.startswith(("http://", "https://")):
+                                    image_url = value
+                                    break
                     if image_url and str(image_url).startswith(f"{SUPABASE_URL.rstrip('/')}/storage/"):
                         try:
                             teste = requests.get(image_url, timeout=30, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0 RaposaCacadora/1.0", "Accept": "image/*,*/*;q=0.8"})
