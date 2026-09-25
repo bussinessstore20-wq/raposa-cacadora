@@ -142,6 +142,21 @@ class handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
 
+        if path.startswith("/api/dashboard/action/"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 4:
+                action = parts[3].strip().lower()
+                post_id = parts[2].strip()
+                if action in ("approve", "reject", "reenviar", "retry") and post_id.isdigit():
+                    approval_body = json.dumps({
+                        "post_id": int(post_id),
+                        "action": action,
+                        "initData": self.headers.get("X-Telegram-Init-Data", ""),
+                    }).encode("utf-8")
+                    status, headers, response_body = proxy("/api/carousel/action", "POST", approval_body, self.headers)
+                    self._send(status, headers, response_body)
+                    return
+
         if path in ("/api/configurar", "/api/carousel/action", "/api/dashboard", "/api/index.py", "/api/settings", "/api/control", "/webhook/manus"):
             # /api/dashboard is a known-working Vercel route used as the stable POST entrypoint for approval actions.
             # It avoids the custom nested route and direct .py path that returned 404 in production.
