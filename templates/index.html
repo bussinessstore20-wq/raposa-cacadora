@@ -147,5 +147,15 @@ async function controlar(ativo){
   try{await api("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ativo,initData:tg?.initData||""})});document.getElementById("ativo").checked=ativo;carregar()}
   catch(e){alert("❌ "+e.message)}
 }
+</script><script>
+async function carregar(){
+  try{
+    let u="/api/dashboard"+(statusFiltro?"?status="+encodeURIComponent(statusFiltro):"");
+    let d=await api(u);render(d);
+    if(document.getElementById("historico")?.classList.contains("active"))carregarAuditoria();
+  }catch(e){
+    document.getElementById("cards").innerHTML='<div class="empty">⚠️ '+esc(e.message)+'<br><small>Abra o painel pelo Telegram para autenticar.</small></div>';
+  }
+}
 </script></body>
 </html>
