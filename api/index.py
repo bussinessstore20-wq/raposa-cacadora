@@ -13,7 +13,7 @@ HTML_PATH = Path(__file__).resolve().parent.parent / "templates" / "index.html"
 def proxy(path, method, body=b"", headers=None):
     target = f"{RENDER_URL}{path}"
     forward_headers = {}
-    for key in ("Content-Type", "Accept", "X-Webhook-Signature", "X-Webhook-Timestamp"):
+    for key in ("Content-Type", "Accept", "X-Webhook-Signature", "X-Webhook-Timestamp", "X-Telegram-Init-Data"):
         if headers and headers.get(key):
             forward_headers[key] = headers[key]
 
@@ -66,7 +66,7 @@ class handler(BaseHTTPRequestHandler):
             self._send(200, {"Content-Type": "text/html; charset=utf-8"}, body)
             return
 
-        if path.startswith("/api/status") or path == "/webhook/manus":
+        if path.startswith("/api/status") or path.startswith("/api/dashboard") or path == "/webhook/manus":
             status, headers, body = proxy(path, "GET", headers=self.headers)
             self._send(status, headers, body)
             return

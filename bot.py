@@ -193,6 +193,77 @@ class HealthHandler(
                 self.end_headers()
             return
 
+        if path == "/api/dashboard":
+            try:
+                init_data = self.headers.get("X-Telegram-Init-Data", "")
+                if not validar_telegram_webapp(init_data):
+                    self._json_body(401, {"ok": False, "error": "telegram_auth_invalid"})
+                    return
+                user = extrair_usuario_webapp(init_data)
+                if not user or int(user.get("id", 0)) != int(TELEGRAM_ADMIN_ID):
+                    self._json_body(403, {"ok": False, "error": "usuario_nao_autorizado"})
+                    return
+
+                params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                filtro = str(params.get("status", [""])[0] or "").strip().lower()
+
+                consulta = (
+                    supabase.table("instagram_posts")
+                    .select("id,status,category,manus_task_id,manus_task_url,caption,assets,instagram_media_id,error,created_at,updated_at,published_at,bot_id")
+                    .eq("bot_id", BOT_ID)
+                    .order("id", desc=True)
+                    .limit(50)
+                )
+                if filtro and filtro in {"pending","manus_processing","ready","approved","publishing","published","rejected","error"}:
+                    consulta = consulta.eq("status", filtro)
+
+                posts = consulta.execute().data or []
+                counts_raw = (
+                    supabase.table("instagram_posts")
+                    .select("status")
+                    .eq("bot_id", BOT_ID)
+                    .execute()
+                    .data or []
+                )
+                counts = {}
+                for item in counts_raw:
+                    estado = str(item.get("status") or "unknown")
+                    counts[estado] = counts.get(estado, 0) + 1
+
+                fila_raw = (
+                    supabase.table("produtos_fila")
+                    .select("status")
+                    .eq("fila_origem", FILA_ORIGEM)
+                    .eq("bot_id", BOT_ID)
+                    .execute()
+                    .data or []
+                )
+                fila_counts = {}
+                for item in fila_raw:
+                    estado = str(item.get("status") or "unknown")
+                    fila_counts[estado] = fila_counts.get(estado, 0) + 1
+
+                self._json_body(200, {
+                    "ok": True,
+                    "bot_id": BOT_ID,
+                    "stats": {
+                        "total": len(counts_raw),
+                        "pending": counts.get("pending", 0) + counts.get("manus_processing", 0),
+                        "ready": counts.get("ready", 0),
+                        "approved": counts.get("approved", 0),
+                        "published": counts.get("published", 0),
+                        "rejected": counts.get("rejected", 0),
+                        "error": counts.get("error", 0),
+                        "fila_pendente": fila_counts.get("pending", 0),
+                        "fila_processando": fila_counts.get("processing", 0),
+                    },
+                    "posts": posts,
+                })
+            except Exception as erro:
+                logger.exception("Erro no dashboard: %s", erro)
+                self._json_body(500, {"ok": False, "error": "internal_error"})
+            return
+
         if path == "/api/status":
             try:
                 params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
