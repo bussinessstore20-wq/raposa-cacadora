@@ -475,6 +475,15 @@ class HealthHandler(
                     return
                 post = post[0]
                 old = str(post.get("status") or "")
+                if action in ("approve", "reject") and old != "ready":
+                    self._json_body(409, {"ok": False, "error": "acao_indisponivel"})
+                    return
+                if action == "retry" and old != "error":
+                    self._json_body(409, {"ok": False, "error": "retry_indisponivel"})
+                    return
+                if action == "reenviar" and old not in ("ready", "approved"):
+                    self._json_body(409, {"ok": False, "error": "reenviar_indisponivel"})
+                    return
                 if action in ("approve", "reject"):
                     task_id = str(post.get("manus_task_id") or "").strip()
                     if not task_id:
