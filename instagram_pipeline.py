@@ -172,9 +172,9 @@ def _extrair_urls_de_conteudo_manus(conteudo: str, base_url: str | None = None) 
     urls = []
     vistos = set()
     padroes = [
-        r"!\\[[^\\]]*\\]\\((https?://[^)\\s]+)",
-        r"<img[^>]+src=[\\\"'](https?://[^\\\"']+)",
-        r"https?://[^\\s)\\\"'<>]+",
+        r"!\[[^\]]*\]\((https?://[^)\s]+)",
+        r"<img[^>]+src=[\"'](https?://[^\"']+)",
+        r"https?://[^\s)\"'<>]+",
     ]
     for padrao in padroes:
         for encontrado in re.findall(padrao, conteudo or "", flags=re.I):
