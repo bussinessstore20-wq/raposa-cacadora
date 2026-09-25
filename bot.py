@@ -374,21 +374,68 @@ class HealthHandler(
                         if file_path: image_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
                     if not image_url and post.get("manus_task_id"):
                         try:
-                            mensagens = listar_mensagens_tarefa(str(post["manus_task_id"])); candidatos = []
+                            mensagens = listar_mensagens_tarefa(str(post["manus_task_id"]))
+                            candidatos = []
+
                             def coletar_urls(obj):
                                 if isinstance(obj, dict):
+                                    nome = str(obj.get("file_name") or obj.get("filename") or obj.get("name") or obj.get("path") or "").strip().lower()
                                     tipo = str(obj.get("type") or obj.get("mime_type") or obj.get("content_type") or "").lower()
-                                    for key in ("url", "file_url", "download_url", "image_url", "asset_url"):
-                                        valor = str(obj.get(key) or "").strip(); base_url = valor.lower().split("?")[0]
-                                        if valor.startswith(("http://", "https://")) and ("image" in tipo or any(base_url.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp"))): candidatos.append(valor)
-                                    for valor in obj.values(): coletar_urls(valor)
+                                    parece_anexo = bool(nome or obj.get("file_uid") or obj.get("version_uid") or tipo or obj.get("type") in {"image", "file", "slides"})
+                                    for key in ("url", "file_url", "download_url", "downloadUrl", "image_url", "asset_url"):
+                                        valor = str(obj.get(key) or "").strip()
+                                        if valor.startswith(("http://", "https://")) and parece_anexo:
+                                            candidatos.append({"url": valor, "name": nome, "type": tipo})
+                                    for valor in obj.values():
+                                        coletar_urls(valor)
                                 elif isinstance(obj, list):
-                                    for valor in obj: coletar_urls(valor)
-                            coletar_urls(mensagens); vistos=set(); unicos=[]
-                            for url in candidatos:
-                                if url not in vistos: vistos.add(url); unicos.append(url)
-                            if indice < len(unicos): image_url = unicos[indice]
-                        except Exception: logger.exception("Falha ao recuperar imagem Manus do carrossel #%s.", post_id)
+                                    for valor in obj:
+                                        coletar_urls(valor)
+
+                            coletar_urls(mensagens)
+                            vistos = set()
+                            unicos = []
+                            for item in candidatos:
+                                if item["url"] not in vistos:
+                                    vistos.add(item["url"])
+                                    unicos.append(item)
+
+                            asset_name = str((asset or {}).get("asset_url") or "").strip().lower() if isinstance(asset, dict) else ""
+                            alvo = Path(asset_name).name if asset_name else ""
+                            selecionados = [item for item in unicos if alvo and (alvo in item["name"] or item["name"] in alvo)]
+
+                            if not selecionados:
+                                marcador = f"slide_{indice + 1:02d}"
+                                selecionados = [item for item in unicos if marcador in item["name"]]
+
+                            if not selecionados and indice < len(unicos):
+                                selecionados = [unicos[indice]]
+
+                            for candidato in selecionados:
+                                try:
+                                    teste = requests.get(candidato["url"], timeout=20, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
+                                    content_type = (teste.headers.get("Content-Type") or "").split(";", 1)[0].lower()
+                                    if teste.ok and content_type.startswith("image/") and teste.content:
+                                        image_url = candidato["url"]
+                                        break
+                                    if teste.ok and content_type in {"text/plain", "text/html", "text/markdown", ""}:
+                                        import re
+                                        encontrados = re.findall(r"https?://[^\s\"'<>]+", teste.text)
+                                        for url2 in encontrados:
+                                            try:
+                                                teste2 = requests.get(url2, timeout=20, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
+                                                tipo2 = (teste2.headers.get("Content-Type") or "").split(";", 1)[0].lower()
+                                                if teste2.ok and tipo2.startswith("image/") and teste2.content:
+                                                    image_url = url2
+                                                    break
+                                            except Exception:
+                                                continue
+                                    if image_url:
+                                        break
+                                except Exception:
+                                    continue
+                        except Exception:
+                            logger.exception("Falha ao recuperar imagem Manus do carrossel #%s.", post_id)
                     if not image_url: self._json_body(404, {"ok": False, "error": "imagem_nao_disponivel"}); return
                     imagem = requests.get(image_url, timeout=30)
                     if not imagem.ok: self._json_body(404, {"ok": False, "error": "falha_ao_baixar_imagem"}); return
