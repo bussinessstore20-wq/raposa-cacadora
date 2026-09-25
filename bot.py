@@ -166,6 +166,66 @@ worker_task: asyncio.Task | None = None
 
 
 # ============================================================
+# CONFIGURAÇÕES DINÂMICAS
+# ============================================================
+
+def carregar_configuracoes_dinamicas():
+    global INTERVALO_MINUTOS, bot_ativo
+    try:
+        if supabase is None:
+            return
+        row = (
+            supabase.table("bot_settings")
+            .select("intervalo_minutos,automacao_ativa")
+            .eq("bot_id", BOT_ID)
+            .limit(1)
+            .execute()
+        ).data
+        if row:
+            cfg = row[0]
+            INTERVALO_MINUTOS = max(1, min(1440, int(cfg.get("intervalo_minutos") or INTERVALO_MINUTOS)))
+            bot_ativo = bool(cfg.get("automacao_ativa", True))
+            logger.info("Configuração dinâmica carregada: intervalo=%d, ativo=%s", INTERVALO_MINUTOS, bot_ativo)
+    except Exception:
+        logger.exception("Não foi possível carregar configurações dinâmicas; usando variáveis de ambiente.")
+
+
+def salvar_configuracoes_dinamicas(intervalo_minutos=None, automacao_ativa=None):
+    global INTERVALO_MINUTOS, bot_ativo
+    intervalo = max(1, min(1440, int(intervalo_minutos if intervalo_minutos is not None else INTERVALO_MINUTOS)))
+    ativo = bool(automacao_ativa if automacao_ativa is not None else bot_ativo)
+    (
+        supabase.table("bot_settings")
+        .upsert({
+            "bot_id": BOT_ID,
+            "intervalo_minutos": intervalo,
+            "automacao_ativa": ativo,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        .execute()
+    )
+    INTERVALO_MINUTOS = intervalo
+    bot_ativo = ativo
+
+
+def registrar_auditoria(action, entity_type="system", entity_id=None, old_status=None, new_status=None, details=None):
+    try:
+        if supabase is None:
+            return
+        supabase.table("raposa_audit_log").insert({
+            "bot_id": BOT_ID,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "action": action,
+            "old_status": old_status,
+            "new_status": new_status,
+            "details": details or {},
+        }).execute()
+    except Exception:
+        logger.exception("Falha ao registrar auditoria: %s", action)
+
+
+# ============================================================
 # SERVIDOR HTTP PARA O RENDER
 # ============================================================
 
@@ -249,9 +309,25 @@ class HealthHandler(
                     estado = str(item.get("status") or "unknown")
                     fila_counts[estado] = fila_counts.get(estado, 0) + 1
 
+                audit = (
+                    supabase.table("raposa_audit_log")
+                    .select("id,entity_type,entity_id,action,old_status,new_status,details,created_at")
+                    .eq("bot_id", BOT_ID)
+                    .order("id", desc=True)
+                    .limit(30)
+                    .execute().data or []
+                )
+                settings = (
+                    supabase.table("bot_settings")
+                    .select("intervalo_minutos,automacao_ativa,updated_at")
+                    .eq("bot_id", BOT_ID)
+                    .limit(1)
+                    .execute().data or []
+                )
                 self._json_body(200, {
                     "ok": True,
                     "bot_id": BOT_ID,
+                    "runtime": {"ativo": bot_ativo, "intervalo_minutos": INTERVALO_MINUTOS, "worker": bool(worker_task and not worker_task.done())},
                     "stats": {
                         "total": len(counts_raw),
                         "pending": counts.get("pending", 0) + counts.get("manus_processing", 0),
@@ -264,10 +340,83 @@ class HealthHandler(
                         "fila_processando": fila_counts.get("processing", 0),
                     },
                     "posts": posts,
+                    "audit": audit,
+                    "settings": settings[0] if settings else {"intervalo_minutos": INTERVALO_MINUTOS, "automacao_ativa": bot_ativo},
                 })
             except Exception as erro:
                 logger.exception("Erro no dashboard: %s", erro)
                 self._json_body(500, {"ok": False, "error": "internal_error"})
+            return
+
+        if path.startswith("/api/carrossel/"):
+            try:
+                init_data = self.headers.get("X-Telegram-Init-Data", "")
+                if not validar_telegram_webapp(init_data):
+                    self._json_body(401, {"ok": False, "error": "telegram_auth_invalid"})
+                    return
+                user = extrair_usuario_webapp(init_data)
+                if not user or int(user.get("id", 0)) != int(TELEGRAM_ADMIN_ID):
+                    self._json_body(403, {"ok": False, "error": "usuario_nao_autorizado"})
+                    return
+                raw_id = path.rsplit("/", 1)[-1]
+                post_id = int(raw_id)
+                post = (
+                    supabase.table("instagram_posts")
+                    .select("*")
+                    .eq("id", post_id).eq("bot_id", BOT_ID).limit(1).execute().data
+                )
+                if not post:
+                    self._json_body(404, {"ok": False, "error": "carrossel_nao_encontrado"})
+                    return
+                audit = (
+                    supabase.table("raposa_audit_log")
+                    .select("id,entity_type,entity_id,action,old_status,new_status,details,created_at")
+                    .eq("bot_id", BOT_ID).eq("entity_type", "instagram_post").eq("entity_id", post_id)
+                    .order("id", desc=False).limit(100).execute().data or []
+                )
+                self._json_body(200, {"ok": True, "post": post[0], "timeline": audit})
+            except Exception as erro:
+                logger.exception("Erro no detalhe do carrossel: %s", erro)
+                self._json_body(500, {"ok": False, "error": "internal_error"})
+            return
+
+        if path == "/api/audit":
+            try:
+                init_data = self.headers.get("X-Telegram-Init-Data", "")
+                if not validar_telegram_webapp(init_data):
+                    self._json_body(401, {"ok": False, "error": "telegram_auth_invalid"})
+                    return
+                user = extrair_usuario_webapp(init_data)
+                if not user or int(user.get("id", 0)) != int(TELEGRAM_ADMIN_ID):
+                    self._json_body(403, {"ok": False, "error": "usuario_nao_autorizado"})
+                    return
+                dados = (
+                    supabase.table("raposa_audit_log")
+                    .select("id,entity_type,entity_id,action,old_status,new_status,details,created_at")
+                    .eq("bot_id", BOT_ID).order("id", desc=True).limit(100).execute().data or []
+                )
+                self._json_body(200, {"ok": True, "items": dados})
+            except Exception:
+                logger.exception("Erro na auditoria")
+                self._json_body(500, {"ok": False, "error": "internal_error"})
+            return
+
+        if path == "/api/health":
+            checks = {}
+            try:
+                supabase.table("bot_settings").select("bot_id").eq("bot_id", BOT_ID).limit(1).execute()
+                checks["supabase"] = {"ok": True}
+            except Exception as erro:
+                checks["supabase"] = {"ok": False, "error": str(erro)[:300]}
+            try:
+                resposta = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe", timeout=5)
+                dados = resposta.json()
+                checks["telegram"] = {"ok": bool(resposta.ok and dados.get("ok")), "status": resposta.status_code}
+            except Exception as erro:
+                checks["telegram"] = {"ok": False, "error": str(erro)[:300]}
+            checks["manus"] = {"ok": bool(os.getenv("MANUS_API_KEY"))}
+            checks["worker"] = {"ok": bool(worker_task and not worker_task.done()), "ativo": bot_ativo}
+            self._json_body(200, {"ok": all(v.get("ok") for v in checks.values()), "checks": checks, "timestamp": datetime.now(timezone.utc).isoformat()})
             return
 
         if path == "/api/status":
@@ -299,6 +448,127 @@ class HealthHandler(
                 })
             except Exception as erro:
                 logger.exception("Erro no status do Web App: %s", erro)
+                self._json_body(500, {"ok": False, "error": "internal_error"})
+            return
+
+        if path == "/api/carousel/action":
+            length = int(self.headers.get("Content-Length", "0"))
+            try:
+                dados = json.loads(self.rfile.read(length).decode("utf-8"))
+                init_data = str(dados.get("initData") or self.headers.get("X-Telegram-Init-Data") or "")
+                if not validar_telegram_webapp(init_data):
+                    self._json_body(401, {"ok": False, "error": "telegram_auth_invalid"})
+                    return
+                user = extrair_usuario_webapp(init_data)
+                if not user or int(user.get("id", 0)) != int(TELEGRAM_ADMIN_ID):
+                    self._json_body(403, {"ok": False, "error": "usuario_nao_autorizado"})
+                    return
+                post_id = int(dados.get("post_id"))
+                action = str(dados.get("action") or "").strip().lower()
+                post = (
+                    supabase.table("instagram_posts")
+                    .select("id,status,manus_task_id,manus_task_url,caption,bot_id")
+                    .eq("id", post_id).eq("bot_id", BOT_ID).limit(1).execute().data
+                )
+                if not post:
+                    self._json_body(404, {"ok": False, "error": "carrossel_nao_encontrado"})
+                    return
+                post = post[0]
+                old = str(post.get("status") or "")
+                if action in ("approve", "reject"):
+                    task_id = str(post.get("manus_task_id") or "").strip()
+                    if not task_id:
+                        self._json_body(400, {"ok": False, "error": "manus_task_missing"})
+                        return
+                    aprovado = action == "approve"
+                    instrucao = (
+                        f"O carrossel #{post_id} foi APROVADO pelo administrador no painel. Continue o fluxo e publique no Instagram conforme as instruções originais."
+                        if aprovado else
+                        f"O carrossel #{post_id} foi REPROVADO pelo administrador no painel. Não publique este carrossel e encerre o fluxo."
+                    )
+                    await_result = enviar_mensagem_tarefa(task_id, instrucao)
+                    novo = "approved" if aprovado else "rejected"
+                    supabase.table("instagram_posts").update({
+                        "status": novo,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
+                    registrar_auditoria("panel_approve" if aprovado else "panel_reject","instagram_post",post_id,old,novo,{"telegram_user_id":user.get("id")})
+                    self._json_body(200, {"ok": True, "status": novo, "message": "Decisão enviada ao Manus."})
+                    return
+                if action == "retry":
+                    supabase.table("instagram_posts").update({
+                        "status": "pending", "error": None, "updated_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
+                    registrar_auditoria("panel_retry","instagram_post",post_id,old,"pending",{"telegram_user_id":user.get("id")})
+                    self._json_body(200, {"ok": True, "status": "pending", "message": "Carrossel devolvido para processamento."})
+                    return
+                if action == "reenviar":
+                    task_id = str(post.get("manus_task_id") or "").strip()
+                    if not task_id:
+                        self._json_body(400, {"ok": False, "error": "manus_task_missing"})
+                        return
+                    from manus import listar_mensagens_tarefa
+                    mensagens = listar_mensagens_tarefa(task_id)
+                    attachments = _extrair_attachments({}, mensagens)
+                    if not attachments:
+                        self._json_body(400, {"ok": False, "error": "attachments_missing"})
+                        return
+                    enviado = _enviar_preview_telegram(post_id, {}, attachments, str(post.get("caption") or ""), str(post.get("manus_task_url") or "") or None)
+                    if not enviado:
+                        self._json_body(500, {"ok": False, "error": "reenviar_falhou"})
+                        return
+                    registrar_auditoria("panel_reenviar","instagram_post",post_id,old,old,{"telegram_user_id":user.get("id")})
+                    self._json_body(200, {"ok": True, "message": "Carrossel reenviado para o Telegram."})
+                    return
+                self._json_body(400, {"ok": False, "error": "acao_invalida"})
+            except Exception as erro:
+                logger.exception("Erro na ação do painel: %s", erro)
+                self._json_body(500, {"ok": False, "error": "internal_error"})
+            return
+
+        if path == "/api/settings":
+            length = int(self.headers.get("Content-Length", "0"))
+            try:
+                dados = json.loads(self.rfile.read(length).decode("utf-8"))
+                init_data = str(dados.get("initData") or self.headers.get("X-Telegram-Init-Data") or "")
+                if not validar_telegram_webapp(init_data):
+                    self._json_body(401, {"ok": False, "error": "telegram_auth_invalid"})
+                    return
+                user = extrair_usuario_webapp(init_data)
+                if not user or int(user.get("id", 0)) != int(TELEGRAM_ADMIN_ID):
+                    self._json_body(403, {"ok": False, "error": "usuario_nao_autorizado"})
+                    return
+                intervalo = int(dados.get("intervalo_minutos") or INTERVALO_MINUTOS)
+                if intervalo < 1 or intervalo > 1440:
+                    self._json_body(400, {"ok": False, "error": "intervalo_invalido"})
+                    return
+                ativo = bool(dados.get("automacao_ativa"))
+                salvar_configuracoes_dinamicas(intervalo, ativo)
+                registrar_auditoria("settings_update","system",None,None,None,{"intervalo_minutos":intervalo,"automacao_ativa":ativo,"telegram_user_id":user.get("id")})
+                self._json_body(200, {"ok": True, "settings": {"intervalo_minutos":INTERVALO_MINUTOS,"automacao_ativa":bot_ativo}})
+            except Exception:
+                logger.exception("Erro ao salvar configurações")
+                self._json_body(500, {"ok": False, "error": "internal_error"})
+            return
+
+        if path == "/api/control":
+            length = int(self.headers.get("Content-Length", "0"))
+            try:
+                dados = json.loads(self.rfile.read(length).decode("utf-8"))
+                init_data = str(dados.get("initData") or self.headers.get("X-Telegram-Init-Data") or "")
+                if not validar_telegram_webapp(init_data):
+                    self._json_body(401, {"ok": False, "error": "telegram_auth_invalid"})
+                    return
+                user = extrair_usuario_webapp(init_data)
+                if not user or int(user.get("id", 0)) != int(TELEGRAM_ADMIN_ID):
+                    self._json_body(403, {"ok": False, "error": "usuario_nao_autorizado"})
+                    return
+                ativo = bool(dados.get("ativo"))
+                salvar_configuracoes_dinamicas(None, ativo)
+                registrar_auditoria("control_start" if ativo else "control_stop","system",None,None,None,{"telegram_user_id":user.get("id")})
+                self._json_body(200, {"ok": True, "ativo":bot_ativo})
+            except Exception:
+                logger.exception("Erro no controle do bot")
                 self._json_body(500, {"ok": False, "error": "internal_error"})
             return
 
@@ -806,6 +1076,7 @@ def buscar_proximo_produto():
         .select("*")
         .eq("status", "pending")
         .eq("fila_origem", FILA_ORIGEM)
+        .eq("bot_id", BOT_ID)
         .order("created_at", desc=False)
         .limit(1)
         .execute()
@@ -2022,6 +2293,8 @@ async def comando_stop(
         return
 
     bot_ativo = False
+    try: salvar_configuracoes_dinamicas(None, False)
+    except Exception: logger.exception("Falha ao persistir STOP")
 
     logger.warning(
         "Publicação pausada pelo administrador."
@@ -2058,6 +2331,8 @@ async def comando_iniciar(
         return
 
     bot_ativo = True
+    try: salvar_configuracoes_dinamicas(None, True)
+    except Exception: logger.exception("Falha ao persistir INICIAR")
 
     logger.info(
         "Publicação iniciada pelo administrador."
@@ -2187,6 +2462,8 @@ async def callback_controle(
     if query.data == "bot_stop":
 
         bot_ativo = False
+        try: salvar_configuracoes_dinamicas(None, False)
+        except Exception: logger.exception("Falha ao persistir STOP do botão")
 
         logger.warning(
             "Publicação parada pelo botão STOP."
@@ -2204,6 +2481,8 @@ async def callback_controle(
     elif query.data == "bot_iniciar":
 
         bot_ativo = True
+        try: salvar_configuracoes_dinamicas(None, True)
+        except Exception: logger.exception("Falha ao persistir INICIAR do botão")
 
         logger.info(
             "Publicação iniciada pelo botão."
@@ -2653,6 +2932,7 @@ def main():
     validar_configuracao()
 
     iniciar_supabase()
+    carregar_configuracoes_dinamicas()
 
     # --------------------------------------------------------
     # RECUPERAR PROCESSAMENTOS PRESOS
