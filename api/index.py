@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 
 from http.server import BaseHTTPRequestHandler
 
@@ -53,7 +54,7 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        path = self.path
+        path = urlsplit(self.path).path
 
         if path == "/" or path == "":
             try:
@@ -116,7 +117,7 @@ class handler(BaseHTTPRequestHandler):
         self._send(404, {"Content-Type": "application/json; charset=utf-8"}, b'{"error":"Not found"}')
 
     def do_POST(self):
-        path = self.path
+        path = urlsplit(self.path).path
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
 
