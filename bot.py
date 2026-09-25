@@ -29,7 +29,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 from instagram_pipeline import processar_webhook_manus
-from manus import enviar_mensagem_tarefa
+from manus import enviar_mensagem_tarefa, listar_mensagens_tarefa
 
 from telegram.ext import (
     Application,
@@ -349,6 +349,57 @@ class HealthHandler(
             return
 
         if path.startswith("/api/carrossel/"):
+            # /api/carrossel/{id}/imagem/{indice} serve a imagem sem expor o token do Telegram.
+            partes_carrossel = [p for p in path.split("/") if p]
+            if len(partes_carrossel) == 5 and partes_carrossel[0:2] == ["api", "carrossel"] and partes_carrossel[3] == "imagem":
+                try:
+                    init_data = self.headers.get("X-Telegram-Init-Data", "")
+                    if not validar_telegram_webapp(init_data):
+                        self._json_body(401, {"ok": False, "error": "telegram_auth_invalid"}); return
+                    user = extrair_usuario_webapp(init_data)
+                    if not user or int(user.get("id", 0)) != int(TELEGRAM_ADMIN_ID):
+                        self._json_body(403, {"ok": False, "error": "usuario_nao_autorizado"}); return
+                    post_id = int(partes_carrossel[2]); indice = int(partes_carrossel[4])
+                    if indice < 0 or indice > 30: self._json_body(400, {"ok": False, "error": "indice_invalido"}); return
+                    row = supabase.table("instagram_posts").select("id,bot_id,manus_task_id,assets").eq("id", post_id).eq("bot_id", BOT_ID).limit(1).execute().data
+                    if not row: self._json_body(404, {"ok": False, "error": "carrossel_nao_encontrado"}); return
+                    post = row[0]; assets = post.get("assets") or []; asset = assets[indice] if isinstance(assets, list) and indice < len(assets) else None
+                    file_id = asset.get("telegram_file_id") if isinstance(asset, dict) else None; image_url = None
+                    if isinstance(asset, dict):
+                        for key in ("image_url", "file_url", "download_url", "url"):
+                            value = str(asset.get(key) or "").strip()
+                            if value.startswith(("http://", "https://")): image_url = value; break
+                    if file_id and TELEGRAM_TOKEN:
+                        resposta = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile", params={"file_id": file_id}, timeout=20); dados = resposta.json() if resposta.ok else {}; file_path = ((dados.get("result") or {}).get("file_path") or "").strip()
+                        if file_path: image_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
+                    if not image_url and post.get("manus_task_id"):
+                        try:
+                            mensagens = listar_mensagens_tarefa(str(post["manus_task_id"])); candidatos = []
+                            def coletar_urls(obj):
+                                if isinstance(obj, dict):
+                                    tipo = str(obj.get("type") or obj.get("mime_type") or obj.get("content_type") or "").lower()
+                                    for key in ("url", "file_url", "download_url", "image_url", "asset_url"):
+                                        valor = str(obj.get(key) or "").strip(); base_url = valor.lower().split("?")[0]
+                                        if valor.startswith(("http://", "https://")) and ("image" in tipo or any(base_url.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp"))): candidatos.append(valor)
+                                    for valor in obj.values(): coletar_urls(valor)
+                                elif isinstance(obj, list):
+                                    for valor in obj: coletar_urls(valor)
+                            coletar_urls(mensagens); vistos=set(); unicos=[]
+                            for url in candidatos:
+                                if url not in vistos: vistos.add(url); unicos.append(url)
+                            if indice < len(unicos): image_url = unicos[indice]
+                        except Exception: logger.exception("Falha ao recuperar imagem Manus do carrossel #%s.", post_id)
+                    if not image_url: self._json_body(404, {"ok": False, "error": "imagem_nao_disponivel"}); return
+                    imagem = requests.get(image_url, timeout=30)
+                    if not imagem.ok: self._json_body(404, {"ok": False, "error": "falha_ao_baixar_imagem"}); return
+                    content_type = imagem.headers.get("Content-Type", "image/jpeg").split(";")[0]
+                    if not content_type.startswith("image/"): content_type = "image/jpeg"
+                    self.send_response(200); self.send_header("Content-Type", content_type); self.send_header("Cache-Control", "private, max-age=300"); self.send_header("Content-Length", str(len(imagem.content))); self.end_headers(); self.wfile.write(imagem.content)
+                except (ValueError, IndexError): self._json_body(400, {"ok": False, "error": "imagem_invalida"})
+                except Exception as erro: logger.exception("Erro ao servir imagem do carrossel: %s", erro); self._json_body(500, {"ok": False, "error": "internal_error"})
+                return
+
+        if path.startswith("/api/carrossel/"):
             try:
                 init_data = self.headers.get("X-Telegram-Init-Data", "")
                 if not validar_telegram_webapp(init_data):
@@ -374,7 +425,16 @@ class HealthHandler(
                     .eq("bot_id", BOT_ID).eq("entity_type", "instagram_post").eq("entity_id", post_id)
                     .order("id", desc=False).limit(100).execute().data or []
                 )
-                self._json_body(200, {"ok": True, "post": post[0], "timeline": audit})
+                post_data = post[0]
+                product_ids = []
+                for asset in (post_data.get("assets") or []):
+                    if isinstance(asset, dict) and asset.get("product_id"):
+                        try: product_ids.append(int(asset.get("product_id")))
+                        except (TypeError, ValueError): pass
+                products = []
+                if product_ids:
+                    products = (supabase.table("produtos_fila").select("id,product_name,link,image_url,item_id").eq("bot_id", BOT_ID).in_("id", list(dict.fromkeys(product_ids))).execute().data or [])
+                self._json_body(200, {"ok": True, "post": post_data, "timeline": audit, "products": products})
             except Exception as erro:
                 logger.exception("Erro no detalhe do carrossel: %s", erro)
                 self._json_body(500, {"ok": False, "error": "internal_error"})
