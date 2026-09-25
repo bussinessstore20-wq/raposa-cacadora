@@ -324,6 +324,27 @@ class HealthHandler(
                     .limit(1)
                     .execute().data or []
                 )
+                produtos = (
+                    supabase.table("produtos_fila")
+                    .select("id,product_name,link,status,image_url,created_at,updated_at")
+                    .eq("fila_origem", FILA_ORIGEM)
+                    .eq("bot_id", BOT_ID)
+                    .order("id", desc=True)
+                    .limit(50)
+                    .execute().data or []
+                )
+                status_labels = {
+                    "pending": "Pendente",
+                    "processing": "Processando",
+                    "published": "Publicado",
+                    "error": "Erro",
+                    "rejected": "Reprovado",
+                }
+                for produto in produtos:
+                    produto["status_label"] = status_labels.get(
+                        str(produto.get("status") or "").lower(),
+                        str(produto.get("status") or "—").title(),
+                    )
                 self._json_body(200, {
                     "ok": True,
                     "bot_id": BOT_ID,
@@ -340,6 +361,7 @@ class HealthHandler(
                         "fila_processando": fila_counts.get("processing", 0),
                     },
                     "posts": posts,
+                    "products": produtos,
                     "audit": audit,
                     "settings": settings[0] if settings else {"intervalo_minutos": INTERVALO_MINUTOS, "automacao_ativa": bot_ativo},
                 })
