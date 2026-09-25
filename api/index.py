@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 from http.server import BaseHTTPRequestHandler
 
@@ -67,6 +67,17 @@ class handler(BaseHTTPRequestHandler):
             self._send(200, {"Content-Type": "text/html; charset=utf-8"}, body)
             return
 
+        # Approval uses GET here because the current Vercel runtime returns 404 for POST
+        # on /api/dashboard while the same route works on GET.
+        if path == "/api/dashboard":
+            query = parse_qs(urlsplit(self.path).query)
+            action = str(query.get("action", [""])[0]).strip().lower()
+            post_id = str(query.get("post_id", [""])[0]).strip()
+            if action in ("approve", "reject", "reenviar", "retry") and post_id:
+                body = json.dumps({"post_id": post_id, "action": action}).encode("utf-8")
+                status, headers, response_body = proxy("/api/carousel/action", "POST", body, self.headers)
+                self._send(status, headers, response_body)
+                return
         if path == "/api/diagnostico":
             import time
             init_data = self.headers.get("X-Telegram-Init-Data", "")
