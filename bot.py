@@ -730,7 +730,45 @@ class HealthHandler(
                         if aprovado else
                         f"O carrossel #{post_id} foi REPROVADO pelo administrador no painel. Não publique este carrossel e encerre o fluxo."
                     )
-                    await_result = enviar_mensagem_tarefa(task_id, instrucao)
+                    # Tenta o ID salvo e, se o Manus responder not_found, usa o ID da URL.
+                    candidatos_task = [task_id]
+                    task_url = str(post.get("manus_task_url") or "").strip()
+                    if task_url:
+                        task_url_id = task_url.rstrip("/").split("/")[-1].strip()
+                        if task_url_id and task_url_id not in candidatos_task:
+                            candidatos_task.append(task_url_id)
+
+                    ultimo_erro = None
+                    task_usada = None
+                    for candidato_task in candidatos_task:
+                        try:
+                            enviar_mensagem_tarefa(candidato_task, instrucao)
+                            task_usada = candidato_task
+                            break
+                        except Exception as exc:
+                            ultimo_erro = exc
+                            logger.warning(
+                                "Falha ao enviar decisão do carrossel #%s ao Manus usando task_id=%s: %s",
+                                post_id, candidato_task, exc,
+                            )
+
+                    if not task_usada:
+                        erro_texto = str(ultimo_erro or "erro desconhecido")
+                        if "not_found" in erro_texto.lower() or "404" in erro_texto:
+                            self._json_body(502, {
+                                "ok": False,
+                                "error": "manus_task_not_found",
+                                "message": (
+                                    f"O carrossel #{post_id} existe, mas a tarefa Manus vinculada não foi encontrada. O status não foi alterado."
+                                ),
+                            })
+                        else:
+                            self._json_body(502, {
+                                "ok": False,
+                                "error": "manus_send_failed",
+                                "message": "Não foi possível enviar a decisão ao Manus. O status não foi alterado.",
+                            })
+                        return
                     novo = "approved" if aprovado else "rejected"
                     supabase.table("instagram_posts").update({
                         "status": novo,
