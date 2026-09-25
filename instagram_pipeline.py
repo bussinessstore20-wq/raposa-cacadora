@@ -24,6 +24,7 @@ INSTAGRAM_PENDING_WORKER = os.getenv("INSTAGRAM_PENDING_WORKER", "true").strip()
 INSTAGRAM_PENDING_INTERVAL = max(5, int(os.getenv("INSTAGRAM_PENDING_INTERVAL", "10")))
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 TELEGRAM_ADMIN_ID = os.getenv("TELEGRAM_ADMIN_ID", "").strip()
+BOT_ID = os.getenv("BOT_ID", os.getenv("FILA_ORIGEM", "raposa-cacadora")).strip()
 
 def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -68,17 +69,18 @@ def _normalizar_legenda(caption: str, produtos: list[dict[str, Any]]) -> str:
         texto += "\n\n#achadosshopee #shopee #raposacacadora"
     return texto
 
-def criar_lote_instagram(supabase: Client, produto_ids: list[int], source_chat_id: str | None = None, source_message_id: int | None = None) -> int | None:
+def criar_lote_instagram(supabase: Client, produto_ids: list[int], source_chat_id: str | None = None, source_message_id: int | None = None, bot_id: str | None = None) -> int | None:
     if not INSTAGRAM_AUTO_BATCH or not produto_ids:
         return None
     ids = list(dict.fromkeys(int(x) for x in produto_ids))
+    bot_id = (bot_id or BOT_ID).strip()
     primeiro_post_id = None
     for inicio in range(0, len(ids), INSTAGRAM_BATCH_SIZE):
         grupo = ids[inicio:inicio + INSTAGRAM_BATCH_SIZE]
         if len(grupo) < INSTAGRAM_BATCH_SIZE:
             logger.info("Grupo Instagram aguardando completar %d produtos: %d/%d.", INSTAGRAM_BATCH_SIZE, len(grupo), INSTAGRAM_BATCH_SIZE)
             continue
-        post = supabase.table("instagram_posts").insert({"status": "pending", "source_chat_id": source_chat_id, "source_message_id": source_message_id}).execute()
+        post = supabase.table("instagram_posts").insert({"status": "pending", "bot_id": bot_id, "source_chat_id": source_chat_id, "source_message_id": source_message_id}).execute()
         if not post.data:
             raise RuntimeError("Não foi possível criar o lote Instagram.")
         post_id = int(post.data[0]["id"])
@@ -192,7 +194,7 @@ def _enviar_preview_telegram(post_id: int, detail: dict[str, Any], attachments: 
     return resposta.ok
 
 def processar_lote_se_pronto(supabase: Client, post_id: int) -> bool:
-    post_response = supabase.table("instagram_posts").select("*").eq("id", post_id).limit(1).execute()
+    post_response = supabase.table("instagram_posts").select("*").eq("id", post_id).eq("bot_id", BOT_ID).limit(1).execute()
     if not post_response.data or post_response.data[0].get("status") != "pending":
         return False
     produtos = _buscar_produtos_do_lote(supabase, post_id)
@@ -217,9 +219,10 @@ def processar_lote_se_pronto(supabase: Client, post_id: int) -> bool:
         logger.exception("Falha no lote Instagram #%s.", post_id)
         return False
 
-def processar_lotes_pendentes(supabase: Client, limite: int = 10) -> int:
+def processar_lotes_pendentes(supabase: Client, limite: int = 10, bot_id: str | None = None) -> int:
     """Busca lotes pending já completos e dispara o Manus mesmo que os produtos tenham sido processados antes."""
-    resposta = supabase.table("instagram_posts").select("id").eq("status", "pending").order("id").limit(limite).execute()
+    bot_id = (bot_id or BOT_ID).strip()
+    resposta = supabase.table("instagram_posts").select("id").eq("status", "pending").eq("bot_id", bot_id).order("id").limit(limite).execute()
     enviados = 0
     for row in resposta.data or []:
         try:
@@ -245,7 +248,7 @@ def _worker_lotes_pendentes() -> None:
     logger.info("Worker de lotes Instagram pendentes iniciado; intervalo=%ss.", INSTAGRAM_PENDING_INTERVAL)
     while True:
         try:
-            quantidade = processar_lotes_pendentes(cliente, limite=10)
+            quantidade = processar_lotes_pendentes(cliente, limite=10, bot_id=BOT_ID)
             if quantidade:
                 logger.info("Worker Instagram enviou %d lote(s) pendente(s) para o Manus.", quantidade)
         except Exception:
@@ -265,7 +268,7 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
     task_id = detail.get("task_id")
     if not task_id:
         return False, "task_id ausente"
-    post_response = supabase.table("instagram_posts").select("id,status").eq("manus_task_id", task_id).limit(1).execute()
+    post_response = supabase.table("instagram_posts").select("id,status,bot_id").eq("manus_task_id", task_id).eq("bot_id", BOT_ID).limit(1).execute()
     if not post_response.data:
         return True, "tarefa ignorada: task_id não pertence a esta pipeline"
     post_id = int(post_response.data[0]["id"])
