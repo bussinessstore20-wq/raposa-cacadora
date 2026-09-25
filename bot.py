@@ -449,7 +449,10 @@ class HealthHandler(
                                                     break
                                             except Exception:
                                                 continue
-                                    if image_url:
+                                    # Só encerra a busca quando realmente obtivemos
+                                    # bytes de imagem. Uma URL que retorna HTML/Markdown
+                                    # ainda precisa ser processada para encontrar a imagem.
+                                    if image_bytes:
                                         break
                                 except Exception:
                                     continue
