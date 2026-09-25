@@ -1,1 +1,1 @@
-{"$schema":"https://openapi.vercel.sh/vercel.json","routes":[{"src":"/api/carousel/action","dest":"/api/carousel/action.py"},{"src":"/(.*)","dest":"/api/index.py"}]}
+{"$schema":"https://openapi.vercel.sh/vercel.json","routes":[{"src":"/api/carousel/action","dest":"/api/carousel_action.py"},{"src":"/(.*)","dest":"/api/index.py"}]}
