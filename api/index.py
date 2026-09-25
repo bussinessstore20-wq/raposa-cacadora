@@ -6,7 +6,7 @@ from urllib.error import HTTPError, URLError
 
 from http.server import BaseHTTPRequestHandler
 
-RENDER_URL = os.getenv("RENDER_BACKEND_URL", "https://raposa-cacadora.onrender.com").rstrip("/")
+RENDER_URL = "https://raposa-cacadora.onrender.com"
 HTML_PATH = Path(__file__).resolve().parent.parent / "templates" / "index.html"
 
 
