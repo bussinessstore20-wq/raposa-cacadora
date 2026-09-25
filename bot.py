@@ -797,33 +797,50 @@ class HealthHandler(
                     self._json_body(409, {"ok": False, "error": "reenviar_indisponivel"})
                     return
                 if action in ("approve", "reject"):
+                    debug_steps = []
+                    def step(label, status="ok", detail=None):
+                        item = {"label": label, "status": status}
+                        if detail:
+                            item["detail"] = str(detail)[:500]
+                        debug_steps.append(item)
+
+                    step("Recebi a solicitação de " + ("APROVAÇÃO" if action == "approve" else "REPROVAÇÃO"))
                     task_id = str(post.get("manus_task_id") or "").strip()
                     if not task_id:
-                        self._json_body(400, {"ok": False, "error": "manus_task_missing"})
+                        step("manus_task_id não existe no carrossel", "error")
+                        self._json_body(400, {
+                            "ok": False, "error": "manus_task_missing",
+                            "message": "O carrossel foi encontrado, mas não possui manus_task_id.",
+                            "debug_steps": debug_steps,
+                        })
                         return
+                    step("manus_task_id encontrado", "ok", "ID: " + task_id[:80])
                     aprovado = action == "approve"
                     instrucao = (
                         f"O carrossel #{post_id} foi APROVADO pelo administrador no painel. Continue o fluxo e publique no Instagram conforme as instruções originais."
                         if aprovado else
                         f"O carrossel #{post_id} foi REPROVADO pelo administrador no painel. Não publique este carrossel e encerre o fluxo."
                     )
-                    # Tenta o ID salvo e, se o Manus responder not_found, usa o ID da URL.
                     candidatos_task = [task_id]
                     task_url = str(post.get("manus_task_url") or "").strip()
                     if task_url:
                         task_url_id = task_url.rstrip("/").split("/")[-1].strip()
                         if task_url_id and task_url_id not in candidatos_task:
                             candidatos_task.append(task_url_id)
+                    step("Tarefas Manus candidatas preparadas", "ok", "Quantidade: " + str(len(candidatos_task)))
 
                     ultimo_erro = None
                     task_usada = None
                     for candidato_task in candidatos_task:
+                        step("Validando tarefa Manus (task.detail)", "running", "ID: " + candidato_task[:80])
                         try:
-                            enviar_mensagem_tarefa(candidato_task, instrucao)
+                            resposta = enviar_mensagem_tarefa(candidato_task, instrucao)
                             task_usada = candidato_task
+                            step("task.detail + task.sendMessage concluídos", "ok", "Manus aceitou a decisão.")
                             break
                         except Exception as exc:
                             ultimo_erro = exc
+                            step("Falha na comunicação com o Manus", "error", str(exc))
                             logger.warning(
                                 "Falha ao enviar decisão do carrossel #%s ao Manus usando task_id=%s: %s",
                                 post_id, candidato_task, exc,
@@ -832,27 +849,38 @@ class HealthHandler(
                     if not task_usada:
                         erro_texto = str(ultimo_erro or "erro desconhecido")
                         if "not_found" in erro_texto.lower() or "404" in erro_texto:
-                            self._json_body(502, {
-                                "ok": False,
-                                "error": "manus_task_not_found",
-                                "message": (
-                                    f"O carrossel #{post_id} existe, mas a tarefa Manus vinculada não foi encontrada. O status não foi alterado."
-                                ),
-                            })
+                            codigo = "manus_task_not_found"
+                            mensagem = f"O carrossel #{post_id} existe, mas a tarefa Manus vinculada não foi encontrada. O status não foi alterado."
                         else:
-                            self._json_body(502, {
-                                "ok": False,
-                                "error": "manus_send_failed",
-                                "message": "Não foi possível enviar a decisão ao Manus. O status não foi alterado.",
-                            })
+                            codigo = "manus_send_failed"
+                            mensagem = "Não foi possível enviar a decisão ao Manus. O status não foi alterado."
+                        self._json_body(502, {
+                            "ok": False, "error": codigo, "message": mensagem,
+                            "debug_steps": debug_steps,
+                        })
                         return
                     novo = "approved" if aprovado else "rejected"
-                    supabase.table("instagram_posts").update({
-                        "status": novo,
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
+                    step("Enviando atualização do status para o Supabase", "running", "Novo status: " + novo)
+                    try:
+                        supabase.table("instagram_posts").update({
+                            "status": novo,
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
+                        confirmado = supabase.table("instagram_posts").select("status").eq("id", post_id).eq("bot_id", BOT_ID).limit(1).execute().data
+                        if not confirmado or str(confirmado[0].get("status")) != novo:
+                            raise RuntimeError("Supabase não confirmou o novo status.")
+                        step("Status confirmado no Supabase", "ok", novo)
+                    except Exception as exc:
+                        step("Erro ao atualizar/confirmar Supabase", "error", exc)
+                        self._json_body(500, {
+                            "ok": False, "error": "supabase_status_update_failed",
+                            "message": "O Manus recebeu a decisão, mas o status do carrossel não pôde ser confirmado no Supabase.",
+                            "debug_steps": debug_steps,
+                        })
+                        return
                     registrar_auditoria("panel_approve" if aprovado else "panel_reject","instagram_post",post_id,old,novo,{"telegram_user_id":user.get("id")})
-                    self._json_body(200, {"ok": True, "status": novo, "message": "Decisão enviada ao Manus."})
+                    step("Operação concluída", "ok")
+                    self._json_body(200, {"ok": True, "status": novo, "message": "Decisão enviada ao Manus.", "debug_steps": debug_steps})
                     return
                 if action == "retry":
                     supabase.table("instagram_posts").update({
