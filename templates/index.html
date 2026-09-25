@@ -101,7 +101,7 @@ async function acaoPainel(id,action){
  };
  try{
    renderDebug([{label:"Enviando solicitação ao servidor",status:"running"}],false,"Processando...");
-   const d=await api("/api/dashboard?post_id="+encodeURIComponent(id)+"&action="+encodeURIComponent(action),{method:"GET"});
+   const d=await api("/api/dashboard/action/"+encodeURIComponent(id)+"/"+encodeURIComponent(action),{method:"GET"});
    renderDebug(d.debug_steps,true,d.message||"Operação concluída");
    carregar();
  }catch(e){
