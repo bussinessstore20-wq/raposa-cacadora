@@ -40,6 +40,7 @@ body{background:radial-gradient(900px 420px at 65% -10%,rgba(255,106,0,.16),tran
 </div>
 <div class="health" id="health"><div class="health-item">Supabase <span>…</span></div><div class="health-item">Telegram <span>…</span></div><div class="health-item">Manus <span>…</span></div><div class="health-item">Worker <span>…</span></div></div>
 <div class="grid2"><div class="info"><h3>🤖 Operação</h3><p id="opText">Carregando dados...</p></div><div class="info"><h3>📋 Fila</h3><p id="filaText">Carregando dados...</p></div></div>
+<div class="panel" style="margin-top:10px"><div class="card-head"><div><h3 style="margin:0">⚡ Atividade recente</h3><small style="color:var(--muted)">Atualizada automaticamente</small></div><button class="refresh" onclick="carregar()">↻</button></div><div id="activity" class="audit"><div class="empty">Carregando atividade...</div></div></div>
 </section>
 <section id="carrosseis" class="view">
 <div class="hero"><div><h2>Carrosséis</h2><p>Histórico e status separados por bot.</p></div><button class="refresh" onclick="carregar()">↻ Atualizar</button></div>
@@ -49,6 +50,7 @@ body{background:radial-gradient(900px 420px at 65% -10%,rgba(255,106,0,.16),tran
 </section>
 <section id="automacao" class="view">
 <div class="hero"><div><h2>Automação</h2><p>Envie links da Shopee para a fila atual.</p></div></div>
+<div class="grid2"><div class="info"><h3>📥 Fila</h3><p id="autoQueue">Sincronizando...</p></div><div class="info"><h3>⚙️ Estado</h3><p id="autoState">Sincronizando...</p></div></div>
 <div class="panel form"><label class="label">Links da Shopee</label><p style="margin:0 0 10px;color:var(--muted);font-size:10px">Cole vários links de uma vez — um por linha, espaço ou mensagem. A Raposa identifica e remove duplicados automaticamente.</p><textarea id="linksBulk" class="links-bulk" placeholder="https://s.shopee.com.br/...
 https://shopee.com.br/...
 https://s.shopee.com.br/..."></textarea><div class="bulk-meta"><span id="linkCounter">0 links detectados</span><button class="btn secondary" onclick="limparLinks()">Limpar</button></div><div class="form-actions"><button class="btn" onclick="enviar()">🚀 Enviar para a fila</button></div><div id="notice" class="notice"></div></div>
@@ -110,6 +112,10 @@ function render(d){
   let s=d.stats||{},r=d.runtime||{};
   document.getElementById("botPill").textContent="🤖 "+(d.bot_id||"—")+" • "+(r.ativo?"🟢 ativo":"🔴 parado");
   document.getElementById("cfgBot").textContent=d.bot_id||"—";
+  const runtimeText=(r.ativo?"🟢 Automação ativa":"🔴 Automação parada")+" • worker "+(r.worker?"online":"offline")+" • intervalo "+(r.intervalo_minutos||"—")+" min";
+  document.getElementById("cfgRuntime").textContent=runtimeText;
+  document.getElementById("autoState").textContent=runtimeText;
+  document.getElementById("autoQueue").textContent=(s.fila_pendente||0)+" pendentes • "+(s.fila_processando||0)+" processando";
   document.getElementById("sTotal").textContent=s.total??0;
   document.getElementById("sPending").textContent=s.pending??0;
   document.getElementById("sReady").textContent=s.ready??0;
@@ -122,6 +128,11 @@ function render(d){
   document.getElementById("cards").innerHTML=(d.posts||[]).length?d.posts.map(card).join(""):'<div class="empty">Nenhum carrossel encontrado.</div>';
   renderHealth(d);
   if(document.getElementById("audit"))renderAudit(d.audit||[]);
+  if(document.getElementById("activity"))renderActivity(d.audit||[]);
+}
+function renderActivity(items){
+  const el=document.getElementById("activity"); if(!el)return;
+  el.innerHTML=items.length?items.slice(0,8).map(x=>'<div class="audit-row"><b>'+esc(x.action)+(x.entity_id?" • #"+esc(x.entity_id):"")+'</b><small>'+esc(formatDate(x.created_at))+(x.new_status?" • "+esc(x.new_status):"")+'</small></div>').join(""):'<div class="empty">Nenhuma atividade registrada.</div>';
 }
 function card(p){
   let task=p.manus_task_url?'<a href="'+esc(p.manus_task_url)+'" target="_blank" rel="noopener">Manus</a>':"";
