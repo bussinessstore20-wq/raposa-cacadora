@@ -26,7 +26,7 @@
 <div class="stats">
 <div class="stat"><b id="sTotal">—</b><span>Carrosséis</span></div><div class="stat"><b id="sPending">—</b><span>Em criação</span></div><div class="stat"><b id="sReady">—</b><span>Aguardando aprovação</span></div><div class="stat"><b id="sApproved">—</b><span>Aprovados</span></div><div class="stat"><b id="sPublished">—</b><span>Publicados</span></div>
 </div>
-<div class="grid2"><div class="info"><h3>🤖 Operação</h3><p id="opText">Carregando dados...</p></div><div class="info"><h3>📋 Fila</h3><p id="filaText">Carregando dados...</p></div></div><div class="diag" id="diagnostico" hidden></div><div style="margin-top:8px"><button class="refresh" onclick="diagnosticoPainel()">🔎 Diagnosticar conexão</button></div>
+<div class="grid2"><div class="info"><h3>🤖 Operação</h3><p id="opText">Carregando dados...</p></div><div class="info"><h3>📋 Fila</h3><p id="filaText">Carregando dados...</p></div></div>
 </section>
 <section id="carrosseis" class="view">
 <div class="hero"><div><h2>Carrosséis</h2><p>Histórico e status separados por bot.</p></div><button class="refresh" onclick="carregar()">↻ Atualizar</button></div>
@@ -50,8 +50,7 @@ const tg=window.Telegram?.WebApp||null; if(tg){tg.ready();tg.expand();try{tg.set
 let statusFiltro=""; let linksCount=0;
 document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>{document.querySelectorAll(".nav button").forEach(x=>x.classList.remove("active"));b.classList.add("active");document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));document.getElementById(b.dataset.view).classList.add("active");if(b.dataset.view==="carrosseis")carregar()});
 document.querySelectorAll(".filter").forEach(b=>b.onclick=()=>{document.querySelectorAll(".filter").forEach(x=>x.classList.remove("active"));b.classList.add("active");statusFiltro=b.dataset.status;carregar()});
-function authHeaders(){return {"Accept":"application/json","X-Telegram-Init-Data":tg?.initData||""}}async function diagnosticoPainel(){const el=document.getElementById("diagnostico");el.hidden=false;el.textContent="🔎 Diagnóstico em execução...";const info={origin:location.origin,pathname:location.pathname,telegram_webapp:!!tg,init_data_tamanho:tg?.initData?.length||0,init_data_unsafe_user:tg?.initDataUnsafe?.user?.id||null};try{const t=performance.now();const r=await fetch("/api/diagnostico?ts="+Date.now(),{cache:"no-store",headers:authHeaders()});const raw=await r.text();let d;try{d=JSON.parse(raw)}catch{d={raw_preview:raw.slice(0,1000)}}info.http_status=r.status;info.tempo_browser_ms=Math.round(performance.now()-t);info.resposta=d;el.textContent="🔎 DIAGNÓSTICO\\n"+JSON.stringify(info,null,2)}catch(e){info.erro_rede=String(e);el.textContent="🔎 DIAGNÓSTICO\\n"+JSON.stringify(info,null,2)}}
-function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m]))}
+function authHeaders(){return {"Accept":"application/json","X-Telegram-Init-Data":tg?.initData||""}}\nfunction esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m]))}
 function label(s){return ({pending:"Em criação",manus_processing:"Manus processando",ready:"Aguardando aprovação",approved:"Aprovado",publishing:"Publicando",published:"Publicado",rejected:"Reprovado",error:"Erro"}[s]||s||"Desconhecido")}
 function badge(s){let c=s==="ready"?"b-ready":s==="approved"||s==="published"?"b-approved":s==="rejected"||s==="error"?"b-error":s==="pending"||s==="manus_processing"?"b-processing":"";return '<span class="badge '+c+'">'+esc(label(s))+'</span>'}
 function formatDate(v){if(!v)return "—";try{return new Date(v).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"})}catch{return v}}
