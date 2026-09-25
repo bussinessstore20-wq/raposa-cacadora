@@ -5,7 +5,8 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any\nfrom pathlib import Path
+from typing import Any
+from pathlib import Path
 
 import requests
 from supabase import Client, create_client
