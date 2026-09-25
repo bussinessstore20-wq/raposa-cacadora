@@ -5,7 +5,7 @@ import re
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any\nfrom pathlib import Path
 
 import requests
 from supabase import Client, create_client
@@ -112,29 +112,68 @@ def _buscar_produtos_do_lote(supabase: Client, post_id: int) -> list[dict[str, A
     return produtos
 
 def _extrair_attachments(detail: dict[str, Any], messages: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    """Extrai somente anexos reais do Manus, nunca URLs genéricas da tarefa/conteúdo."""
     encontrados, vistos = [], set()
+
     def adicionar(item: Any):
         if not isinstance(item, dict):
             return
-        url = str(item.get("url") or item.get("download_url") or item.get("asset_url") or item.get("downloadUrl") or "").strip()
+        url = str(item.get("url") or item.get("download_url") or item.get("downloadUrl") or "").strip()
         if not url.startswith(("https://", "http://")):
             return
-        nome = str(item.get("file_name") or item.get("filename") or item.get("name") or "imagem").strip()
+
+        content_type = str(item.get("content_type") or item.get("mime_type") or item.get("mimeType") or "").strip().lower()
+        nome = str(item.get("file_name") or item.get("filename") or item.get("name") or "").strip()
+        path = str(item.get("path") or "").strip()
+
+        # O endpoint task.listMessages identifica os arquivos gerados pelo Manus
+        # através de attachments. Só aceitamos objetos que tenham sinais de
+        # attachment para não capturar task_url ou links presentes no texto.
+        parece_attachment = bool(
+            nome
+            or path
+            or content_type
+            or item.get("file_uid")
+            or item.get("version_uid")
+            or item.get("type") in {"image", "file", "slides", "voice"}
+        )
+        if not parece_attachment:
+            return
+
+        if content_type and not content_type.startswith("image/"):
+            return
+
+        if not nome:
+            nome = Path(path).name if path else "imagem"
         chave = (nome, url)
         if chave not in vistos:
             vistos.add(chave)
-            encontrados.append({"file_name": nome, "url": url})
+            encontrados.append({
+                "file_name": nome,
+                "url": url,
+                "path": path,
+                "content_type": content_type or "image/*",
+            })
+
     def percorrer(value: Any):
         if isinstance(value, dict):
+            # Processa o próprio objeto e depois os filhos.
             adicionar(value)
             for v in value.values():
                 percorrer(v)
         elif isinstance(value, list):
             for v in value:
                 percorrer(v)
+
     percorrer(detail)
     if messages:
         percorrer(messages)
+
+    # Ordem determinística: capa/slide 01/slide 02...
+    encontrados.sort(key=lambda item: (
+        0 if "capa" in item["file_name"].lower() else 1,
+        item["file_name"].lower(),
+    ))
     return encontrados
 
 def _salvar_file_ids(supabase: Client | None, post_id: int, file_ids: list[str]) -> None:
