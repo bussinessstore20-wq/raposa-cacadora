@@ -167,21 +167,56 @@ def _extrair_file_ids_telegram(resposta: requests.Response) -> list[str]:
     return file_ids
 
 
-def _baixar_imagem_para_telegram(url: str) -> tuple[bytes, str]:
+def _extrair_urls_de_conteudo_manus(conteudo: str, base_url: str | None = None) -> list[str]:
+    """Extrai URLs de imagens quando a URL de download do Manus retorna Markdown/HTML."""
+    urls = []
+    vistos = set()
+    padroes = [
+        r"!\\[[^\\]]*\\]\\((https?://[^)\\s]+)",
+        r"<img[^>]+src=[\\\"'](https?://[^\\\"']+)",
+        r"https?://[^\\s)\\\"'<>]+",
+    ]
+    for padrao in padroes:
+        for encontrado in re.findall(padrao, conteudo or "", flags=re.I):
+            url = str(encontrado).strip().rstrip(".,;")
+            if url.startswith(("http://", "https://")) and url not in vistos:
+                vistos.add(url)
+                urls.append(url)
+    return urls
+
+
+def _baixar_imagem_para_telegram(url: str, _tentativa: int = 0) -> tuple[bytes, str]:
     resposta = requests.get(
         url,
         timeout=45,
         allow_redirects=True,
-        headers={"User-Agent": "Mozilla/5.0 RaposaCacadora/1.0"},
+        headers={
+            "User-Agent": "Mozilla/5.0 RaposaCacadora/1.0",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        },
     )
     resposta.raise_for_status()
     conteudo = resposta.content
     if not conteudo:
         raise RuntimeError("arquivo vazio")
     tipo = (resposta.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
-    if not tipo.startswith("image/"):
-        raise RuntimeError(f"conteúdo não é imagem: {tipo or 'content-type ausente'}")
-    return conteudo, tipo
+    if tipo.startswith("image/"):
+        return conteudo, tipo
+
+    # Alguns downloads do Manus retornam uma página Markdown/HTML que contém
+    # a URL assinada do arquivo real. Resolve essa camada automaticamente.
+    if _tentativa == 0 and tipo in {"text/markdown", "text/html", "text/plain", ""}:
+        candidatos = _extrair_urls_de_conteudo_manus(
+            conteudo.decode("utf-8", errors="ignore"),
+            resposta.url,
+        )
+        for candidato in candidatos:
+            try:
+                return _baixar_imagem_para_telegram(candidato, _tentativa=1)
+            except Exception:
+                continue
+
+    raise RuntimeError(f"conteúdo não é imagem: {tipo or 'content-type ausente'}")
 
 
 def _enviar_grupo_telegram_por_arquivo(base: str, chat_id: int, grupo: list[dict[str, str]], post_id: int, caption: str, inicio: int) -> requests.Response:
@@ -380,11 +415,16 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
                 enviar_mensagem_tarefa(task_id, "A legenda retornada está fora do padrão obrigatório da Raposa Caçadora. REFAÇA SOMENTE o campo caption. PROIBIDO: qualquer URL http/https, www., 'Links dos achadinhos', 'Encontre os links', 'links na ordem dos slides', 'Acesse os links' ou 'link de cada produto'. OBRIGATÓRIO: lista numerada dos produtos, CTA com LINK NA BIO e nos STORIES, @raposacacadora, comentário 'EU QUERO', pergunta final e hashtags. Não publique nada ainda; aguarde a validação da legenda corrigida.")
                 return True, "legenda inválida; correção solicitada ao Manus"
             attachments = _extrair_attachments(detail)
-            if not attachments:
-                try:
-                    attachments = _extrair_attachments({}, listar_mensagens_tarefa(task_id))
-                except Exception:
-                    logger.exception("Não foi possível recuperar attachments da tarefa Manus %s", task_id)
+            # O webhook pode trazer URLs temporárias ou não trazer todos os
+            # attachments. Sempre consulta o histórico da tarefa para obter
+            # as URLs de download atuais e complementa o conjunto encontrado.
+            try:
+                mensagens_manus = listar_mensagens_tarefa(task_id)
+                attachments_historico = _extrair_attachments({}, mensagens_manus)
+                existentes = {item["url"] for item in attachments}
+                attachments.extend(item for item in attachments_historico if item["url"] not in existentes)
+            except Exception:
+                logger.exception("Não foi possível recuperar attachments da tarefa Manus %s", task_id)
             caption = _normalizar_legenda(caption, produtos)
             supabase.table("instagram_posts").update({"status": "ready", "category": value.get("category"), "caption": caption, "assets": value.get("slides"), "manus_result": structured, "updated_at": _agora()}).eq("id", post_id).execute()
             enviados = _enviar_preview_telegram(post_id, detail, attachments, caption, str(detail.get("task_url") or "") or None, supabase)
