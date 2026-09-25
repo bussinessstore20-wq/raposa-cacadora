@@ -456,16 +456,31 @@ class HealthHandler(
                         except Exception:
                             logger.exception("Falha ao recuperar imagem Manus do carrossel #%s.", post_id)
 
-                    # Último fallback: a imagem original do produto. Isso garante
-                    # que o painel nunca fique sem uma prévia quando o Manus não
-                    # disponibilizar mais o anexo gerado.
-                    if not image_url and isinstance(asset, dict):
+                    # Fallback robusto: usa a imagem original do produto vinculado ao slide.
+                    # Para a capa (slide 1), usa o primeiro produto do lote quando a arte
+                    # gerada pelo Manus não estiver mais disponível.
+                    if not image_bytes:
                         try:
-                            product_id = int(asset.get("product_id") or 0)
-                        except (TypeError, ValueError):
                             product_id = 0
-                        if product_id:
-                            try:
+                            if isinstance(asset, dict):
+                                try:
+                                    product_id = int(asset.get("product_id") or 0)
+                                except (TypeError, ValueError):
+                                    product_id = 0
+                            if not product_id:
+                                rel = (
+                                    supabase.table("instagram_post_products")
+                                    .select("produto_fila_id,position")
+                                    .eq("instagram_post_id", post_id)
+                                    .order("position")
+                                    .execute()
+                                ).data or []
+                                if rel:
+                                    alvo_rel = next((x for x in rel if int(x.get("position") or 0) == indice), None)
+                                    if alvo_rel is None:
+                                        alvo_rel = rel[0]
+                                    product_id = int(alvo_rel.get("produto_fila_id") or 0)
+                            if product_id:
                                 produto = (
                                     supabase.table("produtos_fila")
                                     .select("image_url")
@@ -473,18 +488,23 @@ class HealthHandler(
                                     .eq("bot_id", BOT_ID)
                                     .limit(1)
                                     .execute()
-                                ).data
-                                original_url = str((produto[0].get("image_url") or "") if produto else "").strip()
+                                ).data or []
+                                original_url = str(produto[0].get("image_url") or "").strip() if produto else ""
                                 if original_url.startswith(("http://", "https://")):
-                                    teste = requests.get(original_url, timeout=30, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0", "Accept": "image/*,*/*;q=0.8"})
+                                    teste = requests.get(
+                                        original_url,
+                                        timeout=30,
+                                        allow_redirects=True,
+                                        headers={"User-Agent": "Mozilla/5.0 RaposaCacadora/1.0", "Accept": "image/*,*/*;q=0.8"},
+                                    )
                                     tipo = (teste.headers.get("Content-Type") or "").split(";", 1)[0].lower()
                                     if teste.ok and tipo.startswith("image/") and teste.content:
                                         image_url = original_url
                                         image_bytes = teste.content
                                         image_content_type = tipo
-                                        logger.info("Imagem original do produto usada como fallback: carrossel=%s slide=%s produto=%s bytes=%s", post_id, indice + 1, product_id, len(image_bytes))
-                            except Exception:
-                                logger.exception("Falha no fallback da imagem original do produto #%s.", product_id)
+                                        logger.warning("Preview do Manus indisponível; usando imagem original do produto: carrossel=%s slide=%s produto=%s bytes=%s", post_id, indice + 1, product_id, len(image_bytes))
+                        except Exception:
+                            logger.exception("Falha no fallback da imagem original do carrossel #%s slide %s.", post_id, indice + 1)
 
                     if not image_bytes and image_url:
                         for tentativa in range(3):
