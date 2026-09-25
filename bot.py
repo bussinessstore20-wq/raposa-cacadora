@@ -373,10 +373,25 @@ class HealthHandler(
                     post = row[0]; assets = post.get("assets") or []; asset = assets[indice] if isinstance(assets, list) and indice < len(assets) else None
                     file_id = asset.get("telegram_file_id") if isinstance(asset, dict) else None; image_url = None; image_bytes = None; image_content_type = None
                     if isinstance(asset, dict):
+                        storage_url = str(asset.get("storage_url") or "").strip()
+                        if storage_url.startswith(("http://", "https://")):
+                            image_url = storage_url
                         for key in ("image_url", "file_url", "download_url", "url"):
                             value = str(asset.get(key) or "").strip()
                             if value.startswith(("http://", "https://")): image_url = value; break
-                    if file_id and TELEGRAM_TOKEN:
+                    if image_url and str(image_url).startswith(f"{SUPABASE_URL.rstrip('/')}/storage/"):
+                        try:
+                            teste = requests.get(image_url, timeout=30, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0 RaposaCacadora/1.0", "Accept": "image/*,*/*;q=0.8"})
+                            tipo = (teste.headers.get("Content-Type") or "").split(";", 1)[0].lower()
+                            if teste.ok and tipo.startswith("image/") and teste.content:
+                                image_bytes = teste.content
+                                image_content_type = tipo
+                                logger.info("Imagem persistida recuperada do Storage: carrossel=%s slide=%s bytes=%s", post_id, indice + 1, len(image_bytes))
+                        except Exception:
+                            logger.exception("Falha ao recuperar imagem persistida do Storage: carrossel=%s slide=%s", post_id, indice + 1)
+                    if image_bytes:
+                        pass
+                    elif file_id and TELEGRAM_TOKEN:
                         resposta = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile", params={"file_id": file_id}, timeout=20); dados = resposta.json() if resposta.ok else {}; file_path = ((dados.get("result") or {}).get("file_path") or "").strip()
                         if file_path: image_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
                     if not image_url and post.get("manus_task_id"):
