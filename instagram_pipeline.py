@@ -155,11 +155,68 @@ def _salvar_file_ids(supabase: Client | None, post_id: int, file_ids: list[str])
     except Exception:
         logger.exception("Não foi possível salvar file_id do Telegram para o lote #%s.", post_id)
 
+def _extrair_file_ids_telegram(resposta: requests.Response) -> list[str]:
+    file_ids = []
+    try:
+        for msg in resposta.json().get("result", []):
+            photos = msg.get("photo") or []
+            if photos:
+                file_ids.append(str(photos[-1].get("file_id") or ""))
+    except Exception:
+        logger.exception("Não foi possível extrair file_ids do Telegram.")
+    return file_ids
+
+
+def _baixar_imagem_para_telegram(url: str) -> tuple[bytes, str]:
+    resposta = requests.get(
+        url,
+        timeout=45,
+        allow_redirects=True,
+        headers={"User-Agent": "Mozilla/5.0 RaposaCacadora/1.0"},
+    )
+    resposta.raise_for_status()
+    conteudo = resposta.content
+    if not conteudo:
+        raise RuntimeError("arquivo vazio")
+    tipo = (resposta.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+    if not tipo.startswith("image/"):
+        raise RuntimeError(f"conteúdo não é imagem: {tipo or 'content-type ausente'}")
+    return conteudo, tipo
+
+
+def _enviar_grupo_telegram_por_arquivo(base: str, chat_id: int, grupo: list[dict[str, str]], post_id: int, caption: str, inicio: int) -> requests.Response:
+    media = []
+    files = {}
+    try:
+        for pos, item in enumerate(grupo):
+            nome = item.get("file_name") or f"carrossel-{post_id}-{inicio + pos + 1}.jpg"
+            chave = f"file{pos}"
+            conteudo, tipo = _baixar_imagem_para_telegram(item["url"])
+            media_item = {"type": "photo", "media": f"attach://{chave}"}
+            if inicio == 0 and pos == 0:
+                media_item["caption"] = f"🦊 <b>CARROSSEL #{post_id}</b>\n\n{caption[:900]}"
+                media_item["parse_mode"] = "HTML"
+            media.append(media_item)
+            files[chave] = (nome, conteudo, tipo)
+        return requests.post(
+            f"{base}/sendMediaGroup",
+            data={
+                "chat_id": str(chat_id),
+                "media": json.dumps(media, ensure_ascii=False),
+            },
+            files=files,
+            timeout=90,
+        )
+    finally:
+        files.clear()
+
+
 def _enviar_preview_telegram(post_id: int, detail: dict[str, Any], attachments: list[dict[str, str]], caption: str, task_url: str | None, supabase: Client | None = None) -> bool:
     if not TELEGRAM_TOKEN or not TELEGRAM_ADMIN_ID or not attachments:
         logger.warning("Preview Telegram não enviado: token/chat/attachments ausente.")
         return False
     base = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+    chat_id = int(TELEGRAM_ADMIN_ID)
     enviados = 0
     file_ids = []
     for inicio in range(0, len(attachments), 10):
@@ -171,24 +228,60 @@ def _enviar_preview_telegram(post_id: int, detail: dict[str, Any], attachments: 
                 parte["caption"] = f"🦊 <b>CARROSSEL #{post_id}</b>\n\n{caption[:900]}"
                 parte["parse_mode"] = "HTML"
             media.append(parte)
-        resposta = requests.post(f"{base}/sendMediaGroup", json={"chat_id": int(TELEGRAM_ADMIN_ID), "media": media}, timeout=60)
-        if not resposta.ok:
-            logger.error("Telegram recusou preview do lote #%s: %s", post_id, resposta.text[:1000])
-            return False
         try:
-            for msg in resposta.json().get("result", []):
-                photos = msg.get("photo") or []
-                if photos:
-                    file_ids.append(str(photos[-1].get("file_id") or ""))
-        except Exception:
-            logger.exception("Não foi possível extrair file_ids do Telegram para o lote #%s.", post_id)
+            resposta = requests.post(
+                f"{base}/sendMediaGroup",
+                json={"chat_id": chat_id, "media": media},
+                timeout=60,
+            )
+        except Exception as exc:
+            logger.warning("Falha de rede ao enviar preview do lote #%s por URL: %s", post_id, exc)
+            resposta = None
+
+        if resposta is not None and resposta.ok:
+            file_ids.extend(_extrair_file_ids_telegram(resposta))
+            enviados += len(grupo)
+            continue
+
+        erro_url = (resposta.text[:1000] if resposta is not None else "sem resposta")
+        logger.warning(
+            "Telegram recusou preview do lote #%s por URL; tentando baixar e enviar os arquivos diretamente: %s",
+            post_id,
+            erro_url,
+        )
+        try:
+            resposta_arquivo = _enviar_grupo_telegram_por_arquivo(
+                base, chat_id, grupo, post_id, caption, inicio
+            )
+        except Exception as exc:
+            logger.error(
+                "Não foi possível baixar/enviar as imagens do lote #%s diretamente: %s",
+                post_id,
+                exc,
+            )
+            return False
+
+        if not resposta_arquivo.ok:
+            logger.error(
+                "Telegram recusou os arquivos do preview do lote #%s: %s",
+                post_id,
+                resposta_arquivo.text[:1000],
+            )
+            return False
+
+        file_ids.extend(_extrair_file_ids_telegram(resposta_arquivo))
         enviados += len(grupo)
+        logger.info(
+            "Preview do lote #%s enviado por upload direto após falha da URL.",
+            post_id,
+        )
+
     if supabase and file_ids:
         _salvar_file_ids(supabase, post_id, file_ids)
     texto = f"🦊 <b>CARROSSEL #{post_id} RECEBIDO DA MANUS</b>\n\n📸 <b>{enviados}</b> imagem(ns) enviadas acima.\n👀 Revise a capa e os produtos antes da publicação.\nEscolha uma opção abaixo:"
     if task_url:
         texto += f"\n\n🔗 <a href=\"{task_url}\">Abrir tarefa no Manus</a>"
-    resposta = requests.post(f"{base}/sendMessage", json={"chat_id": int(TELEGRAM_ADMIN_ID), "text": texto, "parse_mode": "HTML", "disable_web_page_preview": True, "reply_markup": {"inline_keyboard": [[{"text": "✅ APROVAR", "callback_data": f"carousel_approve:{post_id}"}, {"text": "❌ REPROVAR", "callback_data": f"carousel_reject:{post_id}"}]]}}, timeout=30)
+    resposta = requests.post(f"{base}/sendMessage", json={"chat_id": chat_id, "text": texto, "parse_mode": "HTML", "disable_web_page_preview": True, "reply_markup": {"inline_keyboard": [[{"text": "✅ APROVAR", "callback_data": f"carousel_approve:{post_id}"}, {"text": "❌ REPROVAR", "callback_data": f"carousel_reject:{post_id}"}]]}}, timeout=30)
     if not resposta.ok:
         logger.error("Telegram recusou os botões do preview do lote #%s: %s", post_id, resposta.text[:1000])
     return resposta.ok
