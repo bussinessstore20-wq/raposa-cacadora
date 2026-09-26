@@ -56,7 +56,7 @@
 const tg=window.Telegram?.WebApp||null;if(tg){tg.ready();tg.expand();try{tg.setHeaderColor("#08090b");tg.setBackgroundColor("#08090b")}catch{}}
 let statusFiltro="";let lastData=null;
 function authHeaders(){return{"Accept":"application/json","X-Telegram-Init-Data":tg?.initData||""}}
-async function api(url,opt={}){opt.headers={...(opt.headers||{}),...authHeaders()};let r=await fetch(url,opt),d=await r.json();if(!r.ok){let e=new Error(d.message||d.error||"Erro de comunicação");e.code=d.error||"";e.debug_steps=Array.isArray(d.debug_steps)?d.debug_steps:[];throw e}return d}
+async function api(url,opt={}){opt.headers={...(opt.headers||{}),...authHeaders()};let r=await fetch(url,opt);let raw=await r.text();let d={};try{d=raw?JSON.parse(raw):{}}catch(_){}if(!r.ok){let e=new Error(d.message||d.error||raw||("HTTP "+r.status));e.code=d.error||"";e.debug_steps=Array.isArray(d.debug_steps)?d.debug_steps:[];throw e}return d}
 function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m]))}
 function label(s){return({pending:"Em produção",manus_processing:"Manus processando",ready:"Aguardando aprovação",approved:"Aprovado",publishing:"Publicando",published:"Publicado",rejected:"Reprovado",error:"Erro"}[s]||s||"Desconhecido")}
 function badge(s){let c=s==="ready"?"b-ready":s==="approved"||s==="published"?"b-approved":s==="rejected"||s==="error"?"b-error":s==="pending"||s==="manus_processing"?"b-processing":"";return'<span class="badge '+c+'">'+esc(label(s))+"</span>"}
