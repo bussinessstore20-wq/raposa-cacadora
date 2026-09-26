@@ -3136,20 +3136,24 @@ async def worker_fila(
 
             if sucesso:
 
+                intervalo_inicio = time.monotonic()
                 logger.info(
-                    "Aguardando %d minutos "
-                    "para o próximo produto...",
+                    "Aguardando intervalo configurado: %d minutos...",
                     INTERVALO_MINUTOS,
                 )
 
-                for _ in range(
-                    INTERVALO_MINUTOS * 60
-                ):
-
-                    if not bot_ativo:
+                while bot_ativo:
+                    decorrido = time.monotonic() - intervalo_inicio
+                    intervalo_atual = max(1, min(1440, int(INTERVALO_MINUTOS)))
+                    restante = (intervalo_atual * 60) - decorrido
+                    if restante <= 0:
                         break
+                    await asyncio.sleep(min(1, restante))
 
-                    await asyncio.sleep(1)
+                if bot_ativo:
+                    logger.info(
+                        "Intervalo concluído. Verificando a próxima entrada da fila."
+                    )
 
             else:
 
