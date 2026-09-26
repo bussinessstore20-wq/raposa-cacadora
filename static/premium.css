@@ -1,0 +1,11 @@
+/* Raposa Caçadora — Premium UI layer */
+.dashboard-blocks{gap:16px;margin-top:16px}
+.dash-block{min-height:184px;padding:26px;border-radius:24px;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
+.dash-block:hover{transform:translateY(-2px);box-shadow:0 18px 55px rgba(0,0,0,.28)}
+.dash-block .dash-icon{width:62px;height:62px;border-radius:19px}
+.dash-block b{font-size:46px;letter-spacing:-.04em}
+.dash-block.published{background:linear-gradient(145deg,rgba(53,213,138,.08),rgba(16,18,23,.92) 55%)}
+.dash-block.review{background:linear-gradient(145deg,rgba(255,200,87,.08),rgba(16,18,23,.92) 55%)}
+.dash-block.production{background:linear-gradient(145deg,rgba(93,169,255,.08),rgba(16,18,23,.92) 55%)}
+.dash-block.error{background:linear-gradient(145deg,rgba(255,98,98,.08),rgba(16,18,23,.92) 55%)}
+@media(max-width:650px){.dashboard-blocks{gap:11px}.dash-block{min-height:150px;padding:20px}.dash-block b{font-size:38px}}
