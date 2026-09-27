@@ -58,7 +58,6 @@ def criar_tarefa_carrossel(produtos: list[dict[str, Any]], post_id: int) -> dict
         raise ManusAPIError("Nenhum produto disponível para a tarefa.")
     if len(produtos) != 5:
         raise ManusAPIError(f"CAROUSEL_REQUIRES_5_PRODUCTS: recebido={len(produtos)}")
-
     produtos_publicos = [
         {
             "id": p.get("id"),
@@ -73,10 +72,8 @@ def criar_tarefa_carrossel(produtos: list[dict[str, Any]], post_id: int) -> dict
         }
         for p in produtos
     ]
-
     prompt_base = _prompt_salvo()
-    prompt = f"""{prompt_base}\n\nINSTRUÇÕES TÉCNICAS DA EXECUÇÃO:\n- ID interno do lote: {post_id}\n- Quantidade obrigatória: exatamente 5 produtos.\n- Gere exatamente 1 capa + 5 slides de produto.\n- Preserve rigorosamente a ordem dos product_id fornecidos.\n- Use somente os 5 produtos abaixo; não invente, substitua ou misture produtos.\n- A saída estruturada deve refletir o conceito e a legenda produzidos pelo prompt salvo.\n\nDADOS DOS 5 PRODUTOS:\n{json.dumps(produtos_publicos, ensure_ascii=False, indent=2)}"""
-
+    prompt = f"""{prompt_base}\n\nINSTRUÇÕES TÉCNICAS DA EXECUÇÃO:\n- ID interno do lote: {post_id}\n- Quantidade obrigatória: exatamente 5 produtos.\n- Gere exatamente 1 capa + 5 slides de produto.\n- Preserve rigorosamente a ordem dos product_id fornecidos.\n- Use somente os 5 produtos abaixo; não invente, substitua ou misture produtos.\n\nDADOS DOS 5 PRODUTOS:\n{json.dumps(produtos_publicos, ensure_ascii=False, indent=2)}"""
     payload = {
         "message": {"content": [{"type": "text", "text": prompt, "visibility": "visible"}]},
         "title": f"Carrossel Instagram - lote {post_id}",
@@ -85,13 +82,9 @@ def criar_tarefa_carrossel(produtos: list[dict[str, Any]], post_id: int) -> dict
             "type": "object",
             "properties": {
                 "category": {"type": "string"},
-                "subcategory": {"type": "string"},
-                "concept": {"type": "string"},
                 "caption": {"type": "string"},
                 "slides": {
                     "type": "array",
-                    "minItems": 5,
-                    "maxItems": 5,
                     "items": {
                         "type": "object",
                         "properties": {
@@ -106,7 +99,7 @@ def criar_tarefa_carrossel(produtos: list[dict[str, Any]], post_id: int) -> dict
                     },
                 },
             },
-            "required": ["category", "subcategory", "concept", "caption", "slides"],
+            "required": ["category", "caption", "slides"],
             "additionalProperties": False,
         },
     }
@@ -118,12 +111,7 @@ def criar_tarefa_carrossel(produtos: list[dict[str, Any]], post_id: int) -> dict
 def detalhar_tarefa(task_id: str) -> dict[str, Any]:
     if not task_id:
         raise ManusAPIError("task_id ausente.")
-    response = requests.get(
-        f"{MANUS_API_URL}/v2/task.detail",
-        headers={"x-manus-api-key": MANUS_API_KEY},
-        params={"task_id": task_id},
-        timeout=60,
-    )
+    response = requests.get(f"{MANUS_API_URL}/v2/task.detail", headers={"x-manus-api-key": MANUS_API_KEY}, params={"task_id": task_id}, timeout=60)
     data = _parse_response(response, "task.detail")
     task = data.get("task")
     if not isinstance(task, dict):
@@ -139,21 +127,11 @@ def enviar_mensagem_tarefa(task_id: str, content: str) -> dict[str, Any]:
     if not content.strip():
         raise ManusAPIError("Mensagem Manus vazia.")
     detalhar_tarefa(task_id)
-    response = requests.post(
-        f"{MANUS_API_URL}/v2/task.sendMessage",
-        headers=_headers(),
-        json={"task_id": task_id, "message": {"content": content.strip()}},
-        timeout=60,
-    )
+    response = requests.post(f"{MANUS_API_URL}/v2/task.sendMessage", headers=_headers(), json={"task_id": task_id, "message": {"content": content.strip()}}, timeout=60)
     return _parse_response(response, "task.sendMessage")
 
 def listar_mensagens_tarefa(task_id: str) -> dict[str, Any]:
     if not task_id:
         raise ManusAPIError("task_id ausente.")
-    response = requests.get(
-        f"{MANUS_API_URL}/v2/task.listMessages",
-        headers={"x-manus-api-key": MANUS_API_KEY},
-        params={"task_id": task_id, "order": "desc", "limit": 200},
-        timeout=60,
-    )
+    response = requests.get(f"{MANUS_API_URL}/v2/task.listMessages", headers={"x-manus-api-key": MANUS_API_KEY}, params={"task_id": task_id, "order": "desc", "limit": 200}, timeout=60)
     return _parse_response(response, "task.listMessages")
