@@ -1394,6 +1394,7 @@ def inserir_links(
                 .select("id,status,bot_id")
                 .eq("link", link)
                 .eq("bot_id", BOT_ID)
+                .eq("fila_origem", FILA_ORIGEM)
                 .limit(1)
                 .execute()
             ).data or []
@@ -1438,6 +1439,7 @@ def inserir_links(
                         .select("id")
                         .eq("link", link)
                         .eq("bot_id", BOT_ID)
+                        .eq("fila_origem", FILA_ORIGEM)
                         .limit(1)
                         .execute()
                     ).data or []
