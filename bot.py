@@ -1022,7 +1022,7 @@ class HealthHandler(
                         return
                 self._json_body(200, {
                     "ok": True,
-                    "mensagem": f"{adicionados} produto(s) adicionado(s) à fila.",
+                    "mensagem": f"{adicionados} adicionado(s), {duplicados} duplicado(s) e {len(erros)} erro(s).",
                     "task_id": ",".join(str(x) for x in ids),
                     "ids": ids, "adicionados": adicionados,
                     "duplicados": duplicados, "erros": len(erros),
