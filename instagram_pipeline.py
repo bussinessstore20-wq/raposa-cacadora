@@ -585,6 +585,10 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
                 assets = []
             assets = [dict(item) if isinstance(item, dict) else {"asset_url": str(item)} for item in assets]
             storage_assets = _persistir_attachments_storage(supabase, post_id, attachments)
+            preview_attachments = []
+            storage_por_indice = {
+                idx: item for idx, item in enumerate(storage_assets)
+            }
             for idx, attachment in enumerate(attachments):
                 if idx >= len(assets):
                     assets.append({})
@@ -595,11 +599,45 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
                     assets[idx]["file_name"] = attachment["file_name"]
                 if attachment.get("content_type"):
                     assets[idx]["content_type"] = attachment["content_type"]
-                if idx < len(storage_assets):
-                    assets[idx]["storage_path"] = storage_assets[idx].get("storage_path")
-                    assets[idx]["storage_url"] = storage_assets[idx].get("storage_url")
-            supabase.table("instagram_posts").update({"status": "ready", "category": value.get("category"), "caption": caption, "assets": assets, "manus_result": structured, "updated_at": _agora()}).eq("id", post_id).execute()
-            enviados = _enviar_preview_telegram(post_id, detail, attachments, caption, str(detail.get("task_url") or "") or None, supabase)
+                salvo = storage_por_indice.get(idx)
+                if salvo:
+                    assets[idx]["storage_path"] = salvo.get("storage_path")
+                    assets[idx]["storage_url"] = salvo.get("storage_url")
+                    preview_attachments.append({
+                        "file_name": salvo.get("file_name") or attachment.get("file_name") or f"slide_{idx + 1:02d}.jpg",
+                        "url": salvo.get("storage_url"),
+                        "path": salvo.get("storage_path") or "",
+                        "content_type": salvo.get("content_type") or attachment.get("content_type") or "image/*",
+                    })
+                else:
+                    # Só usa a URL temporária do Manus para o arquivo que não
+                    # conseguiu ser persistido. Os demais passam pelo Storage
+                    # público e não dependem de URL assinada/expirada.
+                    preview_attachments.append(attachment)
+
+            supabase.table("instagram_posts").update({
+                "status": "ready",
+                "category": value.get("category"),
+                "caption": caption,
+                "assets": assets,
+                "manus_result": structured,
+                "updated_at": _agora(),
+            }).eq("id", post_id).execute()
+
+            enviados = _enviar_preview_telegram(
+                post_id,
+                detail,
+                preview_attachments,
+                caption,
+                str(detail.get("task_url") or "") or None,
+                supabase,
+            )
+            if not enviados:
+                logger.warning(
+                    "Carrossel #%s ficou READY, mas o preview Telegram falhou. "
+                    "As imagens persistidas no Storage continuam disponíveis para o painel.",
+                    post_id,
+                )
             return True, "lote pronto e preview enviado ao Telegram" if enviados else "lote pronto; preview Telegram não enviado"
         except Exception as exc:
             supabase.table("instagram_posts").update({"status": "error", "error": str(exc)[:4000], "updated_at": _agora()}).eq("id", post_id).execute()
