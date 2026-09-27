@@ -1377,12 +1377,10 @@ def extrair_links(
 
 def inserir_links(
     links: list[str],
-) -> tuple[int, int, list[str]]:
-
+) -> tuple[int, int, list[str], list[int]]:
+    """Insere links isolando a duplicidade por bot."""
     if supabase is None:
-        raise RuntimeError(
-            "Supabase não inicializado."
-        )
+        raise RuntimeError("Supabase não inicializado.")
 
     adicionados = 0
     duplicados = 0
@@ -1390,64 +1388,86 @@ def inserir_links(
     ids_inseridos = []
 
     for link in links:
-
         try:
+            existente = (
+                supabase.table("produtos_fila")
+                .select("id,status,bot_id")
+                .eq("link", link)
+                .eq("bot_id", BOT_ID)
+                .limit(1)
+                .execute()
+            ).data or []
+
+            if existente:
+                duplicados += 1
+                logger.info(
+                    "Link já existente no bot %s: %s (id=%s)",
+                    BOT_ID, link, existente[0].get("id"),
+                )
+                continue
 
             resposta = (
-                supabase
-                .table("produtos_fila")
-                .insert(
-                    {
-                        "link": link,
-                        "status": "pending",
-                        "fila_origem": FILA_ORIGEM,
-                        "bot_id": BOT_ID,
-                    }
-                )
+                supabase.table("produtos_fila")
+                .insert({
+                    "link": link,
+                    "status": "pending",
+                    "fila_origem": FILA_ORIGEM,
+                    "bot_id": BOT_ID,
+                })
                 .execute()
             )
 
             if resposta.data:
                 adicionados += 1
                 ids_inseridos.append(int(resposta.data[0]["id"]))
+            else:
+                erros.append(link)
+                logger.error(
+                    "Supabase não retornou registro após inserir link no bot %s: %s",
+                    BOT_ID, link,
+                )
 
         except Exception as erro:
-
-            mensagem_erro = str(
-                erro
-            )
-
+            mensagem_erro = str(erro)
             texto = mensagem_erro.lower()
 
-            if (
-                "duplicate" in texto
-                or "unique" in texto
-                or "23505" in mensagem_erro
-            ):
+            if "duplicate" in texto or "unique" in texto or "23505" in mensagem_erro:
+                try:
+                    confirma = (
+                        supabase.table("produtos_fila")
+                        .select("id")
+                        .eq("link", link)
+                        .eq("bot_id", BOT_ID)
+                        .limit(1)
+                        .execute()
+                    ).data or []
 
-                duplicados += 1
-
-                logger.info(
-                    "Link já existente: %s",
-                    link,
-                )
-
+                    if confirma:
+                        duplicados += 1
+                        logger.info(
+                            "Duplicidade confirmada para bot %s: %s",
+                            BOT_ID, link,
+                        )
+                    else:
+                        erros.append(link)
+                        logger.error(
+                            "Conflito de unicidade sem registro link+bot: %s",
+                            link,
+                        )
+                except Exception:
+                    erros.append(link)
+                    logger.exception(
+                        "Falha ao confirmar conflito do link: %s",
+                        link,
+                    )
             else:
-
+                erros.append(link)
                 logger.exception(
-                    "Erro ao inserir link: %s",
-                    link,
+                    "Erro ao inserir link no bot %s: %s",
+                    BOT_ID, link,
                 )
 
-                erros.append(link)
-
-    return (
-        adicionados,
-        duplicados,
-        erros,
-        ids_inseridos,
-    )
-
+    return adicionados, duplicados, erros, ids_inseridos
 
 # ============================================================
 # SUPABASE - BUSCAR PRÓXIMO PRODUTO
