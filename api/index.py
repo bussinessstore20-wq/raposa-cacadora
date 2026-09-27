@@ -130,6 +130,7 @@ class handler(BaseHTTPRequestHandler):
             or path.startswith("/api/carrossel/")
             or path == "/api/audit"
             or path == "/api/health"
+            or path == "/api/queue"
             or path == "/webhook/manus"):
             status, headers, body = proxy(self.path, "GET", headers=self.headers)
             self._send(status, headers, body)
@@ -157,7 +158,7 @@ class handler(BaseHTTPRequestHandler):
                     self._send(status, headers, response_body)
                     return
 
-        if path in ("/api/configurar", "/api/carousel/action", "/api/dashboard", "/api/index.py", "/api/settings", "/api/control", "/webhook/manus"):
+        if path in ("/api/configurar", "/api/carousel/action", "/api/dashboard", "/api/index.py", "/api/settings", "/api/control", "/api/queue", "/webhook/manus"):
             # /api/dashboard is a known-working Vercel route used as the stable POST entrypoint for approval actions.
             # It avoids the custom nested route and direct .py path that returned 404 in production.
             if path in ("/api/index.py", "/api/dashboard"):
