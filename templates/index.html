@@ -39,9 +39,20 @@
 <div class="dash-block error"><div class="dash-icon">×</div><div><span>ERRO</span><b id="sError">—</b><small>Itens que precisam de atenção</small></div></div>
 </div></section>
 <section id="automacao" class="view">
-<div class="hero"><div><div class="eyebrow">Entrada</div><h2>Automação</h2><p>Coloque produtos na fila em uma única ação.</p></div></div>
-<div class="queue-highlight"><div class="metric"><b id="autoPending">—</b><span>pendentes</span></div><div class="metric"><b id="autoProcessing">—</b><span>processando</span></div><div class="metric"><b id="autoState">—</b><span>estado</span></div></div>
-<div class="panel form" style="margin-top:10px"><label class="label">Links da Shopee</label><p style="margin:0 0 10px;color:var(--muted);font-size:9px">Cole vários links. Duplicados são removidos automaticamente.</p><textarea id="linksBulk" class="links-bulk" placeholder="https://s.shopee.com.br/...&#10;https://shopee.com.br/..."></textarea><div class="bulk-meta"><span id="linkCounter">0 links detectados</span><button class="refresh" onclick="limparLinks()">Limpar</button></div><div class="form-actions"><button class="btn primary" onclick="enviar()">🚀 Processar links</button></div><div id="notice" class="notice"></div></div>
+<div class="hero"><div><div class="eyebrow">Controle da fila</div><h2>Automação</h2><p>Controle os produtos que aguardam processamento.</p></div></div>
+<div class="queue-highlight"><div class="metric"><b id="autoPending">—</b><span>pendentes</span></div><div class="metric"><b id="autoProcessing">—</b><span>processando</span></div><div class="metric"><b id="autoState">—</b><span>estado da fila</span></div></div>
+<div class="form-actions" style="margin-top:12px">
+<button class="btn primary" onclick="abrirFila()">📋 Fila</button>
+<button class="btn" onclick="reprocessarFila()">🔄 Reprocessar</button>
+<button class="btn" onclick="controlarFila(false)">⏸️ Pausar</button>
+<button class="btn" onclick="controlarFila(true)">▶️ Retomar</button>
+</div>
+<div id="queueNotice" class="notice"></div>
+<div id="queuePanel" class="panel form" style="margin-top:10px;display:none">
+<div class="section-head" style="margin-top:0"><h3>Produtos da fila</h3><span id="queueCount">—</span></div>
+<div id="queueItems" class="cards"><div class="empty">Carregando...</div></div>
+</div>
+<div class="panel form" style="margin-top:10px"><label class="label">Adicionar produtos à fila</label><textarea id="linksBulk" class="links-bulk" placeholder="https://s.shopee.com.br/...&#10;https://shopee.com.br/..."></textarea><div class="bulk-meta"><span id="linkCounter">0 links detectados</span><button class="refresh" onclick="limparLinks()">Limpar</button></div><div class="form-actions"><button class="btn primary" onclick="enviar()">🚀 Adicionar à fila</button></div><div id="notice" class="notice"></div></div>
 </section>
 <section id="carrosseis" class="view">
 <div class="hero"><div><div class="eyebrow">Studio</div><h2>Carrosséis</h2><p>Seu centro de revisão: abra, confira e aprove.</p></div><button class="refresh" onclick="carregar()">↻ Atualizar</button></div>
@@ -88,6 +99,12 @@ function extrairLinksBulk(t){let m=(t||"").match(/https?:\/\/[^\s<>\n]+/gi)||[],
 function atualizarContador(){let n=extrairLinksBulk(document.getElementById("linksBulk")?.value||"").length;document.getElementById("linkCounter").textContent=n+(n===1?" link detectado":" links detectados")+(n>20?" • limite 20":"")}
 function limparLinks(){document.getElementById("linksBulk").value="";atualizarContador()}
 document.getElementById("linksBulk")?.addEventListener("input",atualizarContador);
+async function filaApi(action){return api("/api/queue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,initData:tg?.initData||""})})}
+function queueNotice(msg,ok=true){let n=document.getElementById("queueNotice");if(!n)return;n.textContent=msg;n.className="notice "+(ok?"ok":"err")}
+function renderQueue(items){let el=document.getElementById("queueItems"),count=document.getElementById("queueCount");if(!el)return;let arr=items||[];if(count)count.textContent=arr.length+" produto(s)";el.innerHTML=arr.length?arr.map(x=>'<div class="card"><div class="card-head"><div><div class="id">Produto #'+esc(x.id)+'</div><div class="meta">'+esc(x.product_name||"Sem nome")+' • '+esc(formatDate(x.created_at))+'</div></div>'+badge(x.status)+'</div>'+(x.link?'<div class="caption">'+esc(x.link)+'</div>':"")+(x.erro?'<div class="caption" style="color:#ff8383">⚠️ '+esc(x.erro)+'</div>':"")+'</div>').join(""):'<div class="empty">A fila está vazia.</div>'}
+async function abrirFila(){let p=document.getElementById("queuePanel");if(p)p.style.display="block";try{let d=await filaApi("list");renderQueue(d.items||[])}catch(e){queueNotice("❌ "+e.message,false)}}
+async function reprocessarFila(){try{let d=await filaApi("retry");queueNotice("✓ "+(d.message||"Produtos com erro voltaram para a fila."));abrirFila();carregar()}catch(e){queueNotice("❌ "+e.message,false)}}
+async function controlarFila(ativo){try{let d=await api("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ativo,initData:tg?.initData||""})});queueNotice(ativo?"▶️ Fila retomada.":"⏸️ Fila pausada.");carregar()}catch(e){queueNotice("❌ "+e.message,false)}}
 async function enviar(){let ls=extrairLinksBulk(document.getElementById("linksBulk").value),n=document.getElementById("notice");n.className="notice";if(!ls.length){n.textContent="Cole pelo menos um link da Shopee.";n.className="notice err";return}if(ls.length>20){n.textContent="Limite de 20 links por envio.";n.className="notice err";return}try{let d=await api("/api/configurar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({links:ls,intervalo:1200,quantidade:ls.length,initData:tg?.initData||"",user:tg?.initDataUnsafe?.user||null})});n.textContent=(d.adicionados||0)>0?"✓ "+d.adicionados+" adicionado(s) • "+(d.duplicados||0)+" duplicado(s) • "+(d.erros||0)+" erro(s).":"⚠️ Nenhum link novo foi adicionado • "+(d.duplicados||0)+" duplicado(s) • "+(d.erros||0)+" erro(s).";n.className=(d.adicionados||0)>0?"notice ok":"notice err";document.getElementById("linksBulk").value="";atualizarContador();carregar()}catch(e){n.textContent="❌ "+e.message;n.className="notice err"}}
 async function acaoPainel(id,action){
  if((action==="approve"||action==="reject")&&!confirm(action==="approve"?"Aprovar e enviar a decisão ao Manus?":"Reprovar e impedir a publicação?"))return;
