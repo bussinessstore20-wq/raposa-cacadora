@@ -17,12 +17,7 @@ def proxy(path, method, body=b"", headers=None):
     for key in ("Content-Type", "Accept", "X-Webhook-Signature", "X-Webhook-Timestamp", "X-Telegram-Init-Data"):
         if headers and headers.get(key):
             forward_headers[key] = headers[key]
-    request = Request(
-        target,
-        data=body if method in ("POST", "PUT", "PATCH") else None,
-        headers=forward_headers,
-        method=method,
-    )
+    request = Request(target, data=body if method in ("POST", "PUT", "PATCH") else None, headers=forward_headers, method=method)
     try:
         with urlopen(request, timeout=25) as response:
             return response.status, dict(response.headers.items()), response.read()
@@ -33,10 +28,13 @@ def proxy(path, method, body=b"", headers=None):
         return 502, {"Content-Type": "application/json; charset=utf-8"}, payload
 
 
-def _automation_action(path, headers):
+def automation_proxy(path, headers):
     action = path.rsplit("/", 1)[-1].strip().lower()
     if action not in {"start", "pause", "stop", "resume"}:
         return None
+    # O backend atual recebe /api/control com o campo booleano 'ativo'.
+    # Os aliases tornam o contrato explícito e evitam que o frontend dependa
+    # de uma rota que possa não existir em uma versão antiga do Render.
     ativo = action in {"start", "resume"}
     body = json.dumps({
         "ativo": ativo,
@@ -66,8 +64,7 @@ class handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-
-        if path in {"/", ""}:
+        if path in ("/", ""):
             try:
                 body = HTML_PATH.read_bytes()
             except OSError as error:
@@ -77,13 +74,11 @@ class handler(BaseHTTPRequestHandler):
             self._send(200, {"Content-Type": "text/html; charset=utf-8"}, body)
             return
 
-        # Compatibilidade com os botões da automação.
         if path in {"/api/automacao/start", "/api/automacao/pause", "/api/automacao/stop", "/api/automacao/resume"}:
-            result = _automation_action(path, self.headers)
-            if result:
-                status, headers, response_body = result
-                self._send(status, headers, response_body)
-                return
+            result = automation_proxy(path, self.headers)
+            status, headers, response_body = result
+            self._send(status, headers, response_body)
+            return
 
         if path.startswith("/api/dashboard/action/"):
             parts = path.strip("/").split("/")
@@ -96,7 +91,25 @@ class handler(BaseHTTPRequestHandler):
                     self._send(status, headers, response_body)
                     return
 
-        if path.startswith("/api/status") or path.startswith("/api/dashboard") or path.startswith("/api/carrossel/") or path == "/api/audit" or path == "/api/health" or path == "/api/queue" or path == "/api/settings" or path == "/api/control" or path == "/webhook/manus":
+        if path == "/api/diagnostico":
+            import time
+            init_data = self.headers.get("X-Telegram-Init-Data", "")
+            inicio = time.time()
+            try:
+                status, backend_headers, backend_body = proxy("/api/dashboard", "GET", headers=self.headers)
+                try:
+                    backend_json = json.loads(backend_body.decode("utf-8", errors="replace"))
+                except Exception:
+                    backend_json = None
+                payload = {"ok": True, "proxy": {"vercel_recebeu_init_data": bool(init_data), "init_data_tamanho": len(init_data), "backend_url": RENDER_URL, "backend_alcancado": True, "backend_status": status, "tempo_ms": round((time.time() - inicio) * 1000)}, "backend": backend_json if backend_json is not None else {"raw_preview": backend_body.decode("utf-8", errors="replace")[:500]}}
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self._send(200, {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"}, body)
+            except Exception as error:
+                payload = json.dumps({"ok": False, "proxy": {"vercel_recebeu_init_data": bool(init_data), "init_data_tamanho": len(init_data), "backend_url": RENDER_URL, "backend_alcancado": False, "tempo_ms": round((time.time() - inicio) * 1000)}, "erro_proxy": str(error)}, ensure_ascii=False).encode("utf-8")
+                self._send(502, {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"}, payload)
+            return
+
+        if (path.startswith("/api/status") or path.startswith("/api/dashboard") or path.startswith("/api/carrossel/") or path == "/api/audit" or path == "/api/health" or path == "/api/queue" or path == "/api/settings" or path == "/api/control" or path == "/webhook/manus"):
             status, headers, body = proxy(self.path, "GET", headers=self.headers)
             self._send(status, headers, body)
             return
@@ -109,11 +122,10 @@ class handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
 
         if path in {"/api/automacao/start", "/api/automacao/pause", "/api/automacao/stop", "/api/automacao/resume"}:
-            result = _automation_action(path, self.headers)
-            if result:
-                status, headers, response_body = result
-                self._send(status, headers, response_body)
-                return
+            result = automation_proxy(path, self.headers)
+            status, headers, response_body = result
+            self._send(status, headers, response_body)
+            return
 
         if path == "/api/control":
             try:
