@@ -1,7 +1,7 @@
 /* Raposa Caçadora — integração operacional do painel */
 (function(){
   'use strict';
-  const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+  const esc=v=>String(v==null?'':v).replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;'}[m]));
   const tg=window.Telegram?.WebApp;
   const initData=tg?.initData||'';
   async function request(path,options={}){
@@ -25,7 +25,7 @@
     if(config&&!document.getElementById('premiumConfigExtra')){
       const box=document.createElement('div');box.id='premiumConfigExtra';box.className='premium-extra';
       box.innerHTML=panel('cfgIntegracoes','🤖 Integrações','<div id="integrationGrid" class="health-list"><div>Carregando...</div></div>')+
-      panel('cfgAutomacao','⚡ Automação','<div class="settings-form"><label>Intervalo entre produtos (minutos)<input id="cfgIntervalMinutes" type="number" min="0" step="1" value="2"></label><label>Limite diário<input id="cfgDailyLimit" type="number" min="0" step="1" value="0"></label><div class="settings-actions"><button id="cfgSave" class="btn primary">💾 Aplicar</button><button id="cfgPause" class="btn">⏸️ Pausar</button><button id="cfgStart" class="btn">▶️ Iniciar</button><button id="cfgStop" class="btn danger">⏹️ Parar</button></div><small id="cfgStatus" class="setting-status">Sincronizando...</small></div>')+
+      panel('cfgAutomacao','⚡ Automação','<div class="settings-form"><label>Intervalo entre produtos (minutos)<input id="cfgIntervalMinutes" type="number" min="1" step="1" value="2"></label><label>Limite diário<input id="cfgDailyLimit" type="number" min="0" step="1" value="0"></label><div class="settings-actions"><button id="cfgSave" class="btn primary">💾 Aplicar</button><button id="cfgPause" class="btn">⏸️ Pausar</button><button id="cfgStart" class="btn">▶️ Iniciar</button><button id="cfgStop" class="btn danger">⏹️ Parar</button></div><small id="cfgStatus" class="setting-status">Sincronizando...</small></div>')+
       panel('cfgProdutos','📦 Critérios de produtos',grid([['Avaliação mínima','Configuração disponível no backend quando habilitada'],['Vendas mínimas','Configuração disponível no backend quando habilitada'],['Desconto mínimo','Configuração disponível no backend quando habilitada'],['Preço mínimo / máximo','Configuração disponível no backend quando habilitada']]))+
       panel('cfgConteudo','✍️ Conteúdo','<div class="setting-status">O prompt editorial do Manus permanece no Supabase e não é alterado pelo painel.</div>')+
       panel('cfgNotificacoes','🔔 Notificações','<div id="notificationPanel" class="setting-status">Carregando eventos...</div>');
@@ -56,23 +56,32 @@
       const d=await request('/api/settings');
       const s=d.settings||d.config||d||{};
       const interval=s.interval_minutes??s.intervalo_minutos??s.interval??s.intervalo;
-      if(interval!=null&&document.getElementById('cfgIntervalMinutes'))document.getElementById('cfgIntervalMinutes').value=Number(interval)/((Number(interval)>60)?60:1);
+      if(interval!=null&&document.getElementById('cfgIntervalMinutes'))document.getElementById('cfgIntervalMinutes').value=Number(interval);
       const daily=s.daily_limit??s.limite_diario;
       if(daily!=null&&document.getElementById('cfgDailyLimit'))document.getElementById('cfgDailyLimit').value=daily;
-      const active=s.active??s.ativo??s.automation_active;
+      const active=s.active??s.ativo??s.automation_active??s.automacao_ativa;
       if(document.getElementById('cfgStatus'))document.getElementById('cfgStatus').textContent='Sincronizado • Automação '+(active===false?'pausada':'ativa');
     }catch(e){if(document.getElementById('cfgStatus'))document.getElementById('cfgStatus').textContent='Não foi possível sincronizar configurações: '+e.message}
   }
   async function saveSettings(){
     const minutes=Number(document.getElementById('cfgIntervalMinutes')?.value||0);
     const daily=Number(document.getElementById('cfgDailyLimit')?.value||0);
+    if(!Number.isFinite(minutes)||minutes<1||minutes>1440){notify('❌ Intervalo deve ficar entre 1 e 1440 minutos.','err');return}
     try{
-      await request('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interval_minutes:minutes,daily_limit:daily,initData})});
+      await request('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({intervalo_minutos:minutes,interval_minutes:minutes,daily_limit:daily,initData})});
       notify('✅ Configurações aplicadas no backend.','ok');loadSettings();
     }catch(e){notify('❌ Não foi possível salvar: '+esc(e.message),'err')}
   }
   async function control(action){
-    try{await request('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,initData})});notify('✅ Automação: '+action,'ok');loadSettings();if(typeof carregar==='function')carregar()}catch(e){notify('❌ Controle não aplicado: '+esc(e.message),'err')}
+    const routes={start:'/api/automacao/start',resume:'/api/automacao/resume',pause:'/api/automacao/pause',stop:'/api/automacao/stop'};
+    const path=routes[action]||'/api/control';
+    try{
+      await request(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,initData,ativo:action==='start'||action==='resume'})});
+      const label={start:'iniciada',resume:'retomada',pause:'pausada',stop:'parada'}[action]||action;
+      notify('✅ Automação '+label+'.','ok');
+      loadSettings();
+      if(typeof carregar==='function')carregar();
+    }catch(e){notify('❌ Controle não aplicado: '+esc(e.message),'err')}
   }
   function wireSettings(){
     document.getElementById('cfgSave')?.addEventListener('click',saveSettings);
