@@ -1,6 +1,7 @@
 import logging
 import re
-from urllib.parse import urlparse
+from html import unescape
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 
@@ -13,7 +14,18 @@ class MercadoLivreAPIError(Exception):
     """Erro relacionado à consulta de produtos do Mercado Livre."""
 
 
-def _resolver_link(link: str) -> str:
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/130.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9",
+}
+
+
+def _resolver_link(link: str):
     link = str(link or "").strip()
     if not link:
         raise MercadoLivreAPIError("Link do Mercado Livre está vazio.")
@@ -23,62 +35,82 @@ def _resolver_link(link: str) -> str:
             link,
             allow_redirects=True,
             timeout=30,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/130.0.0.0 Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
-                "Accept-Language": "pt-BR,pt;q=0.9",
-            },
+            headers=_HEADERS,
         )
     except requests.RequestException as erro:
-        raise MercadoLivreAPIError(f"Erro ao resolver link do Mercado Livre: {erro}") from erro
+        raise MercadoLivreAPIError(
+            f"Erro ao resolver link do Mercado Livre: {erro}"
+        ) from erro
 
     if response.status_code >= 400:
         raise MercadoLivreAPIError(
             f"Mercado Livre retornou HTTP {response.status_code} ao resolver o link."
         )
 
-    return response.url or link
+    return response.url or link, response.text or ""
 
 
-def _extrair_item_id(url: str) -> str:
+def _normalizar_item_id(valor: str) -> str | None:
+    if not valor:
+        return None
+
+    valor = unquote(str(valor)).upper()
+    match = re.search(r"\bMLB[-_ ]?(\d{6,})\b", valor)
+    if not match:
+        return None
+
+    return f"MLB{match.group(1)}"
+
+
+def _extrair_item_id(url: str, html: str = "") -> str:
+    """Extrai o ID mesmo quando ele não aparece diretamente no caminho da URL."""
     parsed = urlparse(url)
-    caminho = parsed.path.upper()
-    consulta = parsed.query.upper()
-
-    # Links curtos/catálogos podem trazer o anúncio real nos parâmetros
-    # item_id ou wid; eles têm prioridade sobre o ID de catálogo /p/MLB...
-    for chave in ("ITEM_ID", "WID"):
-        match = re.search(r"(?:^|&)" + chave + r"=(MLB[-_]?\d{6,})(?:&|$)", consulta)
-        if match:
-            item_id = match.group(1).replace("-", "").replace("_", "")
-            if item_id.startswith("MLB"):
-                return item_id
-
-    padroes = [
-        r"\b(MLB[-_]?\d{6,})\b",
-        r"/P/(MLB\d{6,})\b",
-        r"/(MLB\d{6,})(?:[/?#]|$)",
+    partes = [
+        parsed.path,
+        parsed.query,
+        parsed.fragment,
+        unquote(url),
     ]
 
-    for padrao in padroes:
-        match = re.search(padrao, caminho)
-        if match:
-            item_id = match.group(1).replace("-", "").replace("_", "")
-            if item_id.startswith("MLB"):
+    # Primeiro procura explicitamente por item_id, wid, itemId etc.
+    params = parse_qs(parsed.query)
+    for chave in ("item_id", "itemId", "wid", "id"):
+        for valor in params.get(chave, []):
+            item_id = _normalizar_item_id(valor)
+            if item_id:
                 return item_id
+
+    for texto in partes:
+        item_id = _normalizar_item_id(texto)
+        if item_id:
+            return item_id
+
+    # Algumas páginas do Mercado Livre escondem o ID no HTML/JSON inicial.
+    # Procuramos o ID sem depender de um único nome de campo.
+    if html:
+        html_decodificado = unescape(unquote(html))
+        padroes_html = [
+            r'"(?:id|item_id|itemId|itemID|itemIdString)"\s*:\s*"?(MLB[-_ ]?\d{6,})',
+            r'"(?:canonical|url|permalink)"\s*:\s*"[^"]*?(MLB[-_ ]?\d{6,})',
+            r'(?:/|%2F)(MLB[-_ ]?\d{6,})(?:[/?#%&"\\]|$)',
+            r'\b(MLB[-_ ]?\d{6,})\b',
+        ]
+        for padrao in padroes_html:
+            match = re.search(padrao, html_decodificado, re.IGNORECASE)
+            if match:
+                item_id = _normalizar_item_id(match.group(1))
+                if item_id:
+                    return item_id
 
     raise MercadoLivreAPIError(
         "Não foi possível encontrar o ID do produto Mercado Livre no link."
     )
 
+
 def buscar_produto_por_link(link: str) -> dict:
     """Consulta um item público do Mercado Livre e normaliza para o formato usado pela Raposa."""
-    url_final = _resolver_link(link)
-    item_id = _extrair_item_id(url_final)
+    url_final, html = _resolver_link(link)
+    item_id = _extrair_item_id(url_final, html)
 
     logger.info("Mercado Livre: consultando item %s", item_id)
 
@@ -92,7 +124,9 @@ def buscar_produto_por_link(link: str) -> dict:
             },
         )
     except requests.RequestException as erro:
-        raise MercadoLivreAPIError(f"Erro de conexão com o Mercado Livre: {erro}") from erro
+        raise MercadoLivreAPIError(
+            f"Erro de conexão com o Mercado Livre: {erro}"
+        ) from erro
 
     if response.status_code >= 400:
         raise MercadoLivreAPIError(
@@ -102,7 +136,9 @@ def buscar_produto_por_link(link: str) -> dict:
     try:
         item = response.json()
     except ValueError as erro:
-        raise MercadoLivreAPIError("O Mercado Livre retornou uma resposta inválida.") from erro
+        raise MercadoLivreAPIError(
+            "O Mercado Livre retornou uma resposta inválida."
+        ) from erro
 
     if not isinstance(item, dict) or not item.get("id"):
         raise MercadoLivreAPIError("Produto não encontrado no Mercado Livre.")
