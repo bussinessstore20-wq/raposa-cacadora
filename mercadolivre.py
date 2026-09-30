@@ -47,8 +47,17 @@ def _resolver_link(link: str) -> str:
 def _extrair_item_id(url: str) -> str:
     parsed = urlparse(url)
     caminho = parsed.path.upper()
+    consulta = parsed.query.upper()
 
-    # Formatos comuns: /MLB-1234567890, /MLB1234567890 e URLs com /p/MLB...
+    # Links curtos/catálogos podem trazer o anúncio real nos parâmetros
+    # item_id ou wid; eles têm prioridade sobre o ID de catálogo /p/MLB...
+    for chave in ("ITEM_ID", "WID"):
+        match = re.search(r"(?:^|&)" + chave + r"=(MLB[-_]?\d{6,})(?:&|$)", consulta)
+        if match:
+            item_id = match.group(1).replace("-", "").replace("_", "")
+            if item_id.startswith("MLB"):
+                return item_id
+
     padroes = [
         r"\b(MLB[-_]?\d{6,})\b",
         r"/P/(MLB\d{6,})\b",
@@ -65,7 +74,6 @@ def _extrair_item_id(url: str) -> str:
     raise MercadoLivreAPIError(
         "Não foi possível encontrar o ID do produto Mercado Livre no link."
     )
-
 
 def buscar_produto_por_link(link: str) -> dict:
     """Consulta um item público do Mercado Livre e normaliza para o formato usado pela Raposa."""
