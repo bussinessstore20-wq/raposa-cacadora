@@ -188,7 +188,31 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
             if len(titulo_h1) >= 3:
                 dados["title"] = titulo_h1
 
-    if not dados.get("price"):
+    # O preço visível do anúncio é a fonte prioritária. No Mercado Livre,
+    # o JSON-LD pode manter o preço antigo mesmo quando existe uma oferta.
+    fracoes = re.findall(
+        r'class=["'][^"']*andes-money-amount__fraction[^"']*["'][^>]*>\s*([0-9.]+)\s*<',
+        html_decodificado,
+        re.IGNORECASE,
+    )
+    centavos = re.findall(
+        r'class=["'][^"']*andes-money-amount__cents[^"']*["'][^>]*>\s*([0-9]{1,2})\s*<',
+        html_decodificado,
+        re.IGNORECASE,
+    )
+    precos_visiveis = []
+    for indice, fracao in enumerate(fracoes):
+        valor = fracao.replace(".", "")
+        cent = centavos[indice] if indice < len(centavos) else "00"
+        try:
+            precos_visiveis.append(float(f"{valor}.{cent.zfill(2)}"))
+        except ValueError:
+            pass
+
+    if precos_visiveis:
+        # O último valor monetário visível costuma ser o preço vigente da oferta.
+        dados["price"] = precos_visiveis[-1]
+    elif not dados.get("price"):
         padroes_preco = (
             r'R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})',
             r'R\$\s*([0-9]+,[0-9]{2})',
