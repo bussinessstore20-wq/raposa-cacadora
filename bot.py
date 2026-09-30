@@ -1925,56 +1925,52 @@ def montar_mensagem(
         preco_anterior = preco_atual
 
     if marketplace == "mercadolivre":
-        mensagem = (
-            "🟨 <b>OFERTA MERCADO LIVRE</b>\\n"
-            "\\n"
-            f"✨ <b>{nome}</b>\\n"
-            "\\n"
-            "━━━━━━━━━━━━━━━━━━\\n"
-            "\\n"
-            + (
-                f"❌ De: <s>{moeda(preco_anterior)}</s>\\n"
-                if preco_anterior > preco_atual > 0
-                else ""
-            )
-            + f"💰 <b>Por apenas: {moeda(preco_atual)}</b>\\n"
-            + (
-                f"🏷️ <b>{desconto:.0f}% OFF</b>\\n"
-                if desconto > 0
-                else ""
-            )
-            "\\n"
-            "━━━━━━━━━━━━━━━━━━\\n"
-            "\\n"
-            f"📦 <b>{formatar_vendas(vendas)}</b> vendas\\n"
-            f"🏪 <b>{loja}</b>\\n"
-            "\\n"
-            "🚨 <b>Preço sujeito a alteração.</b>\\n"
-            "⚡ Aproveite enquanto estiver disponível!"
-        )
-    else:
-        mensagem = (
-            "🟧 <b>ACHADINHO DA SHOPEE</b>\\n"
-            "\\n"
-            f"✨ <b>{nome}</b>\\n"
-            "\\n"
-            "━━━━━━━━━━━━━━━━━━\\n"
-            "\\n"
-            f"💰 De: <s>{moeda(preco_anterior)}</s>\\n"
-            f"🔥 <b>Por: {moeda(preco_atual)}</b>\\n"
-            f"🏷️ <b>{desconto:.0f}% OFF</b>\\n"
-            "\\n"
-            "━━━━━━━━━━━━━━━━━━\\n"
-            "\\n"
-            f"⭐ <b>{avaliacao:.1f}</b>/5\\n"
-            f"📦 <b>{formatar_vendas(vendas)}</b> vendas\\n"
-            f"🏪 <b>{loja}</b>\\n"
-            "\\n"
-            "🚨 <b>Preço sujeito a alteração.</b>\\n"
-            "⚡ Aproveite enquanto estiver disponível!"
-        )
+        partes = [
+            "🟨 <b>OFERTA MERCADO LIVRE</b>\n",
+            "\n",
+            f"✨ <b>{nome}</b>\n",
+            "\n",
+            "━━━━━━━━━━━━━━━━━━\n",
+            "\n",
+        ]
+        if preco_anterior > preco_atual > 0:
+            partes.append(f"❌ De: <s>{moeda(preco_anterior)}</s>\n")
+        partes.append(f"💰 <b>Por apenas: {moeda(preco_atual)}</b>\n")
+        if desconto > 0:
+            partes.append(f"🏷️ <b>{desconto:.0f}% OFF</b>\n")
+        partes.extend([
+            "\n",
+            "━━━━━━━━━━━━━━━━━━\n",
+            "\n",
+            f"📦 <b>{formatar_vendas(vendas)}</b> vendas\n",
+            f"🏪 <b>{loja}</b>\n",
+            "\n",
+            "🚨 <b>Preço sujeito a alteração.</b>\n",
+            "⚡ Aproveite enquanto estiver disponível!",
+        ])
+        return "".join(partes)
 
-    return mensagem
+    return (
+        "🟧 <b>ACHADINHO DA SHOPEE</b>\n"
+        "\n"
+        f"✨ <b>{nome}</b>\n"
+        "\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "\n"
+        f"💰 De: <s>{moeda(preco_anterior)}</s>\n"
+        f"🔥 <b>Por: {moeda(preco_atual)}</b>\n"
+        f"🏷️ <b>{desconto:.0f}% OFF</b>\n"
+        "\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "\n"
+        f"⭐ <b>{avaliacao:.1f}</b>/5\n"
+        f"📦 <b>{formatar_vendas(vendas)}</b> vendas\n"
+        f"🏪 <b>{loja}</b>\n"
+        "\n"
+        "🚨 <b>Preço sujeito a alteração.</b>\n"
+        "⚡ Aproveite enquanto estiver disponível!"
+    )
+
 
 # ============================================================
 # PUBLICAR PRODUTO
