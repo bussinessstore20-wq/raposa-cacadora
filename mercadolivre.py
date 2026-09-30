@@ -246,6 +246,24 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
     if match:
         dados["original_price"] = match.group(1)
 
+    # Dados internos do anúncio também podem trazer a quantidade exata vendida.
+    if not dados.get("sales"):
+        match = re.search(r'"(?:sold_quantity|soldQuantity)"\\s*:\\s*([0-9]+)', html_decodificado, re.IGNORECASE)
+        if match:
+            dados["sales"] = int(match.group(1))
+
+    # Se a página não expuser as classes visuais, aproveitamos os campos estruturados
+    # do próprio anúncio, sem depender do JSON-LD de SEO.
+    if not dados.get("original_price"):
+        match = re.search(r'"original_price"\\s*:\\s*([0-9]+(?:[.,][0-9]+)?)', html_decodificado, re.IGNORECASE)
+        if match:
+            dados["original_price"] = match.group(1)
+
+    if not dados.get("price"):
+        match = re.search(r'"price"\\s*:\\s*([0-9]+(?:[.,][0-9]+)?)', html_decodificado, re.IGNORECASE)
+        if match:
+            dados["price"] = match.group(1)
+
     if not dados.get("sales"):
         padroes_vendas = (
             r'(?:mais\\s+de\\s*)?(\\d+(?:[.,]\\d+)?)\\s*(milhões?|mil|mi|k)?\\s*(?:unidades?\\s*)?vendid[oa]s?',
