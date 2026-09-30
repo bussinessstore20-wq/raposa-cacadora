@@ -194,17 +194,28 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
     if not dados.get("price") and valores:
         dados["price"] = valores[0]
 
-    for padrao in (
+    padroes_vendas = (
         r'"(?:sold_quantity|soldQuantity)"\s*:\s*([0-9]+)',
+        r'(?:mais\s+de\s*)?([0-9]+(?:[.,][0-9]+)?)\s*(milhões?|mil|mi|k)\s*(?:unidades?\s*)?(?:vendid[oa]s?|vendas)',
         r'(?:mais\s+de\s*)?([0-9][0-9.\s]*)\s*(?:unidades?\s*)?(?:vendid[oa]s?|vendas)',
-    ):
+    )
+    for indice, padrao in enumerate(padroes_vendas):
         match = re.search(padrao, html_decodificado, re.IGNORECASE)
-        if match:
-            try:
-                dados["sales"] = int(re.sub(r"\D", "", match.group(1)))
-                break
-            except (ValueError, TypeError):
-                pass
+        if not match:
+            continue
+        try:
+            texto = match.group(1).replace(".", "").replace(",", ".").strip()
+            numero_vendas = float(texto)
+            if indice == 1:
+                unidade = match.group(2).lower()
+                if unidade in {"mil", "k"}:
+                    numero_vendas *= 1000
+                elif unidade in {"milhão", "milhões", "mi"}:
+                    numero_vendas *= 1000000
+            dados["sales"] = int(numero_vendas)
+            break
+        except (ValueError, TypeError):
+            continue
 
     if not dados.get("image"):
         match = re.search(r'"(?:secure_url|url)"\s*:\s*"(https?:[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', html_decodificado, re.IGNORECASE)
