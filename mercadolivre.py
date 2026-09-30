@@ -188,42 +188,46 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
             if len(titulo_h1) >= 3:
                 dados["title"] = titulo_h1
 
-    # O preço visível do anúncio é a fonte prioritária. No Mercado Livre,
-    # o JSON-LD pode manter o preço antigo mesmo quando existe uma oferta.
-    fracoes = re.findall(
-        r'class=["'][^"']*andes-money-amount__fraction[^"']*["'][^>]*>\s*([0-9.]+)\s*<',
+    # O Mercado Livre pode expor dois preços: o antigo ("De") e o vigente ("Por").
+    # Capturamos os valores visíveis e usamos o maior como "De" e o menor como "Por".
+    precos_visiveis = []
+    blocos_preco = re.findall(
+        r'class=["\'][^"\']*andes-money-amount__fraction[^"\']*["\'][^>]*>\s*([0-9.]+)\s*<',
         html_decodificado,
         re.IGNORECASE,
     )
     centavos = re.findall(
-        r'class=["'][^"']*andes-money-amount__cents[^"']*["'][^>]*>\s*([0-9]{1,2})\s*<',
+        r'class=["\'][^"\']*andes-money-amount__cents[^"\']*["\'][^>]*>\s*([0-9]{1,2})\s*<',
         html_decodificado,
         re.IGNORECASE,
     )
-    precos_visiveis = []
-    for indice, fracao in enumerate(fracoes):
-        valor = fracao.replace(".", "")
-        cent = centavos[indice] if indice < len(centavos) else "00"
+    for indice, fracao in enumerate(blocos_preco):
         try:
-            precos_visiveis.append(float(f"{valor}.{cent.zfill(2)}"))
+            cent = centavos[indice] if indice < len(centavos) else "00"
+            precos_visiveis.append(float(f"{fracao.replace('.', '')}.{cent.zfill(2)}"))
         except ValueError:
-            pass
+            continue
+
+    if not precos_visiveis:
+        valores_monetarios = re.findall(
+            r'R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2})',
+            html_decodificado,
+            re.IGNORECASE,
+        )
+        for valor in valores_monetarios:
+            try:
+                precos_visiveis.append(float(valor.replace('.', '').replace(',', '.')))
+            except ValueError:
+                continue
 
     if precos_visiveis:
-        # O último valor monetário visível costuma ser o preço vigente da oferta.
-        dados["price"] = precos_visiveis[-1]
-    elif not dados.get("price"):
-        padroes_preco = (
-            r'R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})',
-            r'R\$\s*([0-9]+,[0-9]{2})',
-            r'"(?:price|amount|value)"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)',
-            r'"(?:price|amount|value)"\s*:\s*\{\s*"value"\s*:\s*([0-9]+(?:[.,][0-9]+)?)',
-        )
-        for padrao in padroes_preco:
-            match = re.search(padrao, html_decodificado, re.IGNORECASE)
-            if match:
-                dados["price"] = match.group(1)
-                break
+        # Remove repetições para evitar que o mesmo preço em widgets/JSON altere o resultado.
+        unicos = list(dict.fromkeys(precos_visiveis))
+        if len(unicos) >= 2:
+            dados["original_price"] = max(unicos)
+            dados["price"] = min(unicos)
+        else:
+            dados["price"] = unicos[0]
 
     # Alguns anúncios exibem preço original, avaliação e quantidade vendida
     # apenas no texto/render inicial, sem esses valores no JSON-LD.
@@ -237,13 +241,29 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
             dados["original_price"] = match.group(1)
 
     if not dados.get("sales"):
-        match = re.search(
-            r'([0-9][0-9.\s]*)\s*(?:unidades?\s*)?vendid[oa]s?',
-            html_decodificado,
-            re.IGNORECASE,
+        padroes_vendas = (
+            r'(?:mais de\s*)?([0-9][0-9.\s]*(?:mil|mi|milhão|milhões)?)\s*(?:unidades?\s*)?vendid[oa]s?',
+            r'([0-9][0-9.\s]*(?:mil|mi|milhão|milhões)?)\s*vendid[oa]s?',
         )
-        if match:
-            dados["sales"] = re.sub(r"\D", "", match.group(1))
+        for padrao in padroes_vendas:
+            match = re.search(padrao, html_decodificado, re.IGNORECASE)
+            if not match:
+                continue
+            bruto = re.sub(r'\s+', ' ', match.group(1)).strip().lower()
+            numero_match = re.search(r'[0-9]+(?:\.[0-9]+)?', bruto)
+            if not numero_match:
+                continue
+            try:
+                numero_base = float(numero_match.group(0).replace('.', ''))
+                multiplicador = (
+                    1_000_000 if 'milhão' in bruto or 'milhões' in bruto
+                    else 1_000 if 'mil' in bruto or bruto.endswith('mi')
+                    else 1
+                )
+                dados["sales"] = int(numero_base * multiplicador)
+                break
+            except ValueError:
+                continue
 
     if not dados.get("rating"):
         match = re.search(
