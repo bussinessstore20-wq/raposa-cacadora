@@ -230,45 +230,184 @@ def iniciar_worker_lotes_pendentes() -> None:
     if INSTAGRAM_PENDING_WORKER: threading.Thread(target=_worker_lotes_pendentes,name="instagram-pending-worker",daemon=True).start()
 
 def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[bool,str]:
-    event_type=payload.get("event_type"); detail=payload.get("task_detail") or {}; task_id=detail.get("task_id")
-    if not task_id: return False,"task_id ausente"
-    post_response=supabase.table("instagram_posts").select("id,status,bot_id").eq("manus_task_id",task_id).eq("bot_id",BOT_ID).limit(1).execute()
-    if not post_response.data: return True,"tarefa ignorada: task_id não pertence a esta pipeline"
-    post_id=int(post_response.data[0]["id"])
-    if event_type=="task_created": return True,"task_created registrado"
-    if event_type=="task_stopped" and detail.get("stop_reason")=="finish":
+    event_type = payload.get("event_type")
+    detail = payload.get("task_detail") or {}
+    task_id = detail.get("task_id")
+    if not task_id:
+        return False, "task_id ausente"
+
+    post_response = (
+        supabase.table("instagram_posts")
+        .select("id,status,bot_id")
+        .eq("manus_task_id", task_id)
+        .eq("bot_id", BOT_ID)
+        .limit(1)
+        .execute()
+    )
+    if not post_response.data:
+        return True, "tarefa ignorada: task_id não pertence a esta pipeline"
+
+    post_id = int(post_response.data[0]["id"])
+    status_atual = str(post_response.data[0].get("status") or "").strip().lower()
+
+    if event_type == "task_created":
+        return True, "task_created registrado"
+
+    # Após a aprovação, a próxima conclusão da tarefa Manus é a execução da publicação.
+    # O preview continua sendo marcado como ready na conclusão inicial da geração.
+    if event_type == "task_stopped" and detail.get("stop_reason") == "finish" and status_atual == "approved":
+        mensagem = str(detail.get("message") or "").strip()
+        mensagem_lower = mensagem.lower()
+        failure_markers = (
+            "não consegui", "nao consegui", "não foi possível", "nao foi possivel",
+            "falha", "erro", "failed", "failure", "couldn't", "could not", "unable",
+        )
+        publication_markers = (
+            "publicad", "postad", "published", "posted", "instagram.com/",
+            "publicação concluída", "publicacao concluida", "post publicado",
+        )
+
+        if any(marker in mensagem_lower for marker in failure_markers):
+            erro = mensagem or "O Manus informou falha na publicação."
+            supabase.table("instagram_posts").update({
+                "status": "error",
+                "error": erro[:4000],
+                "updated_at": _agora(),
+            }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
+            logger.error("Publicação do carrossel #%s falhou segundo o Manus. Status -> error.", post_id)
+            return True, "publicação marcada como erro"
+
+        if any(marker in mensagem_lower for marker in publication_markers):
+            supabase.table("instagram_posts").update({
+                "status": "published",
+                "published_at": _agora(),
+                "error": None,
+                "updated_at": _agora(),
+            }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
+            logger.info("Publicação confirmada pelo Manus para o carrossel #%s. Status -> published.", post_id)
+            return True, "publicação confirmada; status atualizado para published"
+
+        structured = detail.get("structured_output") or {}
+        value = structured.get("value") or {}
+        texto_structured = json.dumps(value, ensure_ascii=False).lower()
+        if any(marker in texto_structured for marker in publication_markers):
+            supabase.table("instagram_posts").update({
+                "status": "published",
+                "published_at": _agora(),
+                "error": None,
+                "updated_at": _agora(),
+            }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
+            logger.info("Publicação confirmada pelo structured output do Manus para o carrossel #%s.", post_id)
+            return True, "publicação confirmada via structured output"
+
+        logger.warning(
+            "Tarefa aprovada #%s terminou sem confirmação explícita de publicação; mantendo status approved.",
+            post_id,
+        )
+        return True, "tarefa concluída sem confirmação explícita de publicação"
+
+    if event_type == "task_stopped" and detail.get("stop_reason") == "finish":
         try:
-            structured=detail.get("structured_output") or {}
-            if not structured.get("success",False): raise ManusAPIError(structured.get("error") or "Manus não retornou structured output.")
-            value=structured.get("value") or {}; produtos=_buscar_produtos_do_lote(supabase,post_id); caption=str(value.get("caption") or "")
-            if not _legenda_valida(caption,len(produtos)):
-                enviar_mensagem_tarefa(task_id,"A legenda retornada está fora do padrão obrigatório da Raposa Caçadora. REFAÇA SOMENTE o campo caption. Não publique nada ainda; aguarde a validação da legenda corrigida."); return True,"legenda inválida; correção solicitada ao Manus"
-            attachments=_extrair_attachments(detail)
+            structured = detail.get("structured_output") or {}
+            if not structured.get("success", False):
+                raise ManusAPIError(structured.get("error") or "Manus não retornou structured output.")
+            value = structured.get("value") or {}
+            produtos = _buscar_produtos_do_lote(supabase, post_id)
+            caption = str(value.get("caption") or "")
+            if not _legenda_valida(caption, len(produtos)):
+                enviar_mensagem_tarefa(
+                    task_id,
+                    "A legenda retornada está fora do padrão obrigatório da Raposa Caçadora. "
+                    "REFAÇA SOMENTE o campo caption. Não publique nada ainda; aguarde a validação da legenda corrigida.",
+                )
+                return True, "legenda inválida; correção solicitada ao Manus"
+
+            attachments = _extrair_attachments(detail)
             try:
-                mensagens_manus=listar_mensagens_tarefa(task_id); attachments_historico=_extrair_attachments({},mensagens_manus); existentes={item["url"] for item in attachments}; attachments.extend(item for item in attachments_historico if item["url"] not in existentes)
-            except Exception: logger.exception("Não foi possível recuperar attachments da tarefa Manus %s",task_id)
-            # Se o Manus colocou as imagens somente no structured output, também usa asset_url como fonte.
-            existentes={item["url"] for item in attachments}
+                mensagens_manus = listar_mensagens_tarefa(task_id)
+                attachments_historico = _extrair_attachments({}, mensagens_manus)
+                existentes = {item["url"] for item in attachments}
+                attachments.extend(
+                    item for item in attachments_historico
+                    if item["url"] not in existentes
+                )
+            except Exception:
+                logger.exception("Não foi possível recuperar attachments da tarefa Manus %s", task_id)
+
+            existentes = {item["url"] for item in attachments}
             for slide in value.get("slides") or []:
-                if isinstance(slide,dict):
-                    url=str(slide.get("asset_url") or slide.get("image_url") or "").strip()
-                    if url.startswith(("http://","https://")) and url not in existentes:
-                        attachments.append({"file_name":f"slide_{len(attachments)+1:02d}.jpg","url":url,"path":"","content_type":"image/*"}); existentes.add(url)
-            # Para aprovação no app, o Storage é obrigatório. Se não houver pelo menos 6 imagens para 5 produtos, não marca ready.
+                if isinstance(slide, dict):
+                    url = str(slide.get("asset_url") or slide.get("image_url") or "").strip()
+                    if url.startswith(("http://", "https://")) and url not in existentes:
+                        attachments.append({
+                            "file_name": f"slide_{len(attachments)+1:02d}.jpg",
+                            "url": url,
+                            "path": "",
+                            "content_type": "image/*",
+                        })
+                        existentes.add(url)
+
             if len(attachments) < INSTAGRAM_BATCH_SIZE + 1:
-                raise ManusAPIError(f"MANUS_IMAGES_INCOMPLETE: {len(attachments)} imagem(ns) encontradas; esperado pelo menos {INSTAGRAM_BATCH_SIZE + 1} (capa + produtos).")
-            caption=_normalizar_legenda(caption,produtos); assets=value.get("slides") if isinstance(value.get("slides"),list) else []
-            assets=[dict(item) if isinstance(item,dict) else {"asset_url":str(item)} for item in assets]
-            storage_assets=_persistir_attachments_storage(supabase,post_id,attachments)
-            if len(storage_assets)<INSTAGRAM_BATCH_SIZE+1: raise ManusAPIError(f"STORAGE_IMAGES_INCOMPLETE: {len(storage_assets)} imagem(ns) persistidas; esperado {INSTAGRAM_BATCH_SIZE+1}.")
-            for idx,salvo in enumerate(storage_assets):
-                if idx>=len(assets): assets.append({})
-                assets[idx].update({"position":idx+1,"image_url":salvo["storage_url"],"storage_url":salvo["storage_url"],"storage_path":salvo["storage_path"],"file_name":salvo["file_name"],"content_type":salvo["content_type"]})
-            supabase.table("instagram_posts").update({"status":"ready","category":value.get("category"),"caption":caption,"assets":assets,"manus_result":structured,"error":None,"updated_at":_agora()}).eq("id",post_id).execute()
-            enviados=_enviar_preview_telegram(post_id,detail,[{"file_name":x["file_name"],"url":x["storage_url"],"content_type":x["content_type"]} for x in storage_assets],caption,str(detail.get("task_url") or "") or None,supabase)
-            return True,"lote pronto e preview enviado ao Telegram" if enviados else "lote pronto; preview Telegram não enviado"
+                raise ManusAPIError(
+                    f"MANUS_IMAGES_INCOMPLETE: {len(attachments)} imagem(ns) encontradas; "
+                    f"esperado pelo menos {INSTAGRAM_BATCH_SIZE + 1} (capa + produtos)."
+                )
+
+            caption = _normalizar_legenda(caption, produtos)
+            assets = value.get("slides") if isinstance(value.get("slides"), list) else []
+            assets = [dict(item) if isinstance(item, dict) else {"asset_url": str(item)} for item in assets]
+            storage_assets = _persistir_attachments_storage(supabase, post_id, attachments)
+            if len(storage_assets) < INSTAGRAM_BATCH_SIZE + 1:
+                raise ManusAPIError(
+                    f"STORAGE_IMAGES_INCOMPLETE: {len(storage_assets)} imagem(ns) persistidas; "
+                    f"esperado {INSTAGRAM_BATCH_SIZE + 1}."
+                )
+
+            for idx, salvo in enumerate(storage_assets):
+                if idx >= len(assets):
+                    assets.append({})
+                assets[idx].update({
+                    "position": idx + 1,
+                    "image_url": salvo["storage_url"],
+                    "storage_url": salvo["storage_url"],
+                    "storage_path": salvo["storage_path"],
+                    "file_name": salvo["file_name"],
+                    "content_type": salvo["content_type"],
+                })
+
+            supabase.table("instagram_posts").update({
+                "status": "ready",
+                "category": value.get("category"),
+                "caption": caption,
+                "assets": assets,
+                "manus_result": structured,
+                "error": None,
+                "updated_at": _agora(),
+            }).eq("id", post_id).execute()
+
+            enviados = _enviar_preview_telegram(
+                post_id,
+                detail,
+                [{"file_name": x["file_name"], "url": x["storage_url"], "content_type": x["content_type"]} for x in storage_assets],
+                caption,
+                str(detail.get("task_url") or "") or None,
+                supabase,
+            )
+            return (
+                True,
+                "lote pronto e preview enviado ao Telegram"
+                if enviados else
+                "lote pronto; preview Telegram não enviado"
+            )
         except Exception as exc:
-            supabase.table("instagram_posts").update({"status":"error","error":str(exc)[:4000],"updated_at":_agora()}).eq("id",post_id).execute(); logger.exception("Falha ao recuperar resultado Manus lote #%s",post_id); return False,"falha ao recuperar resultado Manus"
-    return True,"evento ignorado"
+            supabase.table("instagram_posts").update({
+                "status": "error",
+                "error": str(exc)[:4000],
+                "updated_at": _agora(),
+            }).eq("id", post_id).execute()
+            logger.exception("Falha ao recuperar resultado Manus lote #%s", post_id)
+            return False, "falha ao recuperar resultado Manus"
+
+    return True, "evento ignorado"
 
 iniciar_worker_lotes_pendentes()
