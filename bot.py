@@ -1932,19 +1932,20 @@ def montar_mensagem(
             "\\n"
             "━━━━━━━━━━━━━━━━━━\\n"
             "\\n"
-            "💰 <b>PREÇO ATUAL</b>\\n"
-            f"<b>{moeda(preco_atual)}</b>\\n"
-            "\\n"
             + (
-                f"❌ Antes: <s>{moeda(preco_anterior)}</s>\\n"
+                f"❌ De: <s>{moeda(preco_anterior)}</s>\\n"
                 if preco_anterior > preco_atual > 0
                 else ""
             )
-            + f"🏷️ <b>{desconto:.0f}% OFF</b>\\n"
+            + f"💰 <b>Por: {moeda(preco_atual)}</b>\\n"
+            + (
+                f"🏷️ <b>{desconto:.0f}% OFF</b>\\n"
+                if desconto > 0
+                else ""
+            )
             "\\n"
             "━━━━━━━━━━━━━━━━━━\\n"
             "\\n"
-            f"⭐ <b>{avaliacao:.1f}</b>/5\\n"
             f"📦 <b>{formatar_vendas(vendas)}</b> vendas\\n"
             f"🏪 <b>{loja}</b>\\n"
             "\\n"
