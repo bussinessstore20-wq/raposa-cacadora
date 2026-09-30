@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from html import unescape
 from urllib.parse import parse_qs, unquote, urlparse
@@ -107,6 +108,161 @@ def _extrair_item_id(url: str, html: str = "") -> str:
     )
 
 
+
+
+def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
+    """Extrai os dados públicos do anúncio quando a API /items estiver bloqueada."""
+    if not html:
+        raise MercadoLivreAPIError(
+            f"Mercado Livre bloqueou a API para {item_id} e não foi possível ler a página."
+        )
+
+    html_decodificado = unescape(unquote(html))
+    dados = {}
+
+    def _primeiro(*valores):
+        for valor in valores:
+            if valor is not None:
+                valor = unescape(str(valor)).strip()
+                if valor:
+                    return valor
+        return ""
+
+    # JSON-LD costuma trazer título, preço, moeda, imagem e URL do anúncio.
+    for bloco in re.findall(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html_decodificado,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        try:
+            import json
+            obj = json.loads(bloco.strip())
+        except (ValueError, TypeError):
+            continue
+
+        objetos = obj if isinstance(obj, list) else [obj]
+        for item in objetos:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("@type", "")).lower() in {"product", "offer"}:
+                dados["title"] = dados.get("title") or item.get("name")
+                dados["image"] = dados.get("image") or item.get("image")
+                dados["url"] = dados.get("url") or item.get("url")
+                offers = item.get("offers") or {}
+                if isinstance(offers, list):
+                    offers = offers[0] if offers else {}
+                if isinstance(offers, dict):
+                    dados["price"] = dados.get("price") or offers.get("price")
+                    dados["currency"] = (
+                        dados.get("currency") or offers.get("priceCurrency")
+                    )
+
+    # Metatags usadas pela página para compartilhamento/SEO.
+    metas = re.findall(
+        r'<meta[^>]+(?:property|name)=["\']([^"\']+)["\'][^>]+content=["\']([^"\']*)["\']',
+        html_decodificado,
+        re.IGNORECASE,
+    )
+    for nome, valor in metas:
+        nome = nome.lower()
+        if nome in {"og:title", "twitter:title"} and not dados.get("title"):
+            dados["title"] = valor
+        elif nome in {"og:image", "twitter:image"} and not dados.get("image"):
+            dados["image"] = valor
+        elif nome in {"og:url", "twitter:url"} and not dados.get("url"):
+            dados["url"] = valor
+        elif nome == "product:price:amount" and not dados.get("price"):
+            dados["price"] = valor
+
+    # Fallbacks para estruturas internas da página.
+    if not dados.get("title"):
+        match = re.search(
+            r'"(?:title|name)"\s*:\s*"([^"]{3,300})"',
+            html_decodificado,
+            re.IGNORECASE,
+        )
+        if match:
+            dados["title"] = match.group(1)
+
+    if not dados.get("price"):
+        for padrao in (
+            r'"(?:price|amount)"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)',
+            r'"(?:price|amount)"\s*:\s*\{\s*"value"\s*:\s*([0-9]+(?:[.,][0-9]+)?)',
+        ):
+            match = re.search(padrao, html_decodificado, re.IGNORECASE)
+            if match:
+                dados["price"] = match.group(1)
+                break
+
+    if not dados.get("image"):
+        match = re.search(
+            r'"(?:secure_url|url)"\s*:\s*"(https?:[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"',
+            html_decodificado,
+            re.IGNORECASE,
+        )
+        if match:
+            dados["image"] = match.group(1)
+
+    # A URL canônica é preferível ao link curto.
+    if not dados.get("url"):
+        match = re.search(
+            r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)',
+            html_decodificado,
+            re.IGNORECASE,
+        )
+        if match:
+            dados["url"] = match.group(1)
+
+    preco = 0.0
+    try:
+        preco = float(str(dados.get("price") or "0").replace(".", "").replace(",", "."))
+    except (TypeError, ValueError):
+        try:
+            preco = float(dados.get("price") or 0)
+        except (TypeError, ValueError):
+            preco = 0.0
+
+    image = dados.get("image") or ""
+    if isinstance(image, list):
+        image = image[0] if image else ""
+    image = _primeiro(image)
+
+    product_link = _primeiro(dados.get("url"), url_final)
+    titulo = _primeiro(dados.get("title"), f"Produto Mercado Livre {item_id}")
+
+    produto = {
+        "productName": titulo,
+        "itemId": item_id,
+        "shopId": None,
+        "price": preco,
+        "priceMin": preco,
+        "priceMax": preco,
+        "originalPrice": 0.0,
+        "priceDiscountRate": 0.0,
+        "ratingStar": 0,
+        "sales": 0,
+        "shopName": "Mercado Livre",
+        "imageUrl": image,
+        "productLink": product_link,
+        "offerLink": product_link,
+        "manualAffiliateLink": url_final,
+        "affiliateLink": url_final,
+        "marketplace": "mercadolivre",
+    }
+
+    if not produto["productName"] and not produto["imageUrl"] and not produto["price"]:
+        raise MercadoLivreAPIError(
+            f"Mercado Livre bloqueou a API para {item_id} e a página não expôs dados do produto."
+        )
+
+    logger.info(
+        "Produto Mercado Livre obtido pela página: %s | item=%s",
+        produto["productName"],
+        produto["itemId"],
+    )
+    return produto
+
+
 def buscar_produto_por_link(link: str) -> dict:
     """Consulta um item público do Mercado Livre e normaliza para o formato usado pela Raposa."""
     url_final, html = _resolver_link(link)
@@ -114,19 +270,31 @@ def buscar_produto_por_link(link: str) -> dict:
 
     logger.info("Mercado Livre: consultando item %s", item_id)
 
+    access_token = os.getenv("MERCADO_LIVRE_ACCESS_TOKEN", "").strip()
+    api_headers = {
+        "Accept": "application/json",
+        "User-Agent": "RaposaCacadora/1.0",
+    }
+    if access_token:
+        api_headers["Authorization"] = f"Bearer {access_token}"
+
     try:
         response = requests.get(
             f"{MERCADO_LIVRE_API_URL}/items/{item_id}",
             timeout=30,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "RaposaCacadora/1.0",
-            },
+            headers=api_headers,
         )
     except requests.RequestException as erro:
         raise MercadoLivreAPIError(
             f"Erro de conexão com o Mercado Livre: {erro}"
         ) from erro
+
+    if response.status_code == 403:
+        logger.warning(
+            "Mercado Livre API retornou 403 para %s; usando dados públicos da página.",
+            item_id,
+        )
+        return _extrair_dados_da_pagina(html, url_final, item_id)
 
     if response.status_code >= 400:
         raise MercadoLivreAPIError(
