@@ -44,6 +44,10 @@ from shopee import (
     buscar_produto_por_link,
     ShopeeAPIError,
 )
+from mercadolivre import (
+    buscar_produto_por_link as buscar_produto_mercadolivre,
+    MercadoLivreAPIError,
+)
 
 from instagram_pipeline import (
     criar_lote_instagram,
@@ -1449,6 +1453,8 @@ def extrair_links(
         if (
             "shopee.com.br" in link_lower
             or "s.shopee.com.br" in link_lower
+            or "mercadolivre.com.br" in link_lower
+            or "mercadolibre.com" in link_lower
         ):
             links.append(link)
 
@@ -2151,16 +2157,22 @@ async def processar_produto(
 
     try:
 
-        produto = await asyncio.to_thread(
-            buscar_produto_por_link,
-            link,
-        )
+        link_lower = str(link).lower()
+        if "mercadolivre.com.br" in link_lower or "mercadolibre.com" in link_lower:
+            logger.info("Detectado link do Mercado Livre.")
+            produto = await asyncio.to_thread(
+                buscar_produto_mercadolivre,
+                link,
+            )
+        else:
+            logger.info("Detectado link da Shopee.")
+            produto = await asyncio.to_thread(
+                buscar_produto_por_link,
+                link,
+            )
 
         if not produto:
-
-            raise ShopeeAPIError(
-                "Produto não encontrado."
-            )
+            raise RuntimeError("Produto não encontrado.")
 
         logger.info(
             "Produto encontrado: %s",
@@ -2225,10 +2237,10 @@ async def processar_produto(
 
         return True
 
-    except ShopeeAPIError as erro:
+    except (ShopeeAPIError, MercadoLivreAPIError) as erro:
 
         logger.error(
-            "Erro da Shopee: %s",
+            "Erro da plataforma ao processar produto: %s",
             erro,
         )
 
@@ -3066,9 +3078,10 @@ async def receber_links(
 
         await update.message.reply_text(
             (
-                "⚠️ Não encontrei links da Shopee.\n\n"
+                "⚠️ Não encontrei links válidos da Shopee ou Mercado Livre.\n\n"
                 "Envie um ou vários links, por exemplo:\n"
-                "https://s.shopee.com.br/..."
+                "https://s.shopee.com.br/...\n"
+                "https://www.mercadolivre.com.br/..."
             )
         )
 
