@@ -116,7 +116,9 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
             f"Mercado Livre bloqueou a API para {item_id} e não foi possível ler a página."
         )
 
-    html = unescape(unquote(html))
+    import json
+
+    html = unescape(unquote(html)).replace("\\/","/")
     texto = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
 
     def moeda(valor):
@@ -134,8 +136,8 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
         return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", unescape(str(valor or "")))).strip()
 
     dados = {}
+    jsonld_prices = []
 
-    # O título e a imagem vêm primeiro dos metadados públicos da página.
     for pattern in (
         r'<h1[^>]*>(.*?)</h1>',
         r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
@@ -144,82 +146,93 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
         m = re.search(pattern, html, re.I | re.S)
         if m:
             titulo = limpar(m.group(1))
-            if titulo and not titulo.lower().startswith("mercado livre"):
+            if titulo and not titulo.lower().startswith(("mercado livre", "produto mercado livre")):
                 dados["title"] = titulo
                 break
 
     for pattern in (
         r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)',
         r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)',
-        r'"(?:secure_url|original|url|src)"\s*:\s*"(https?[^"]+\.(?:jpg|jpeg|png|webp)(?:\?[^"]*)?)"',
-        r'(https?:[^"\']+\.(?:jpg|jpeg|png|webp)(?:\?[^"\']*)?)',
     ):
         m = re.search(pattern, html, re.I)
         if m:
-            imagem = unescape(m.group(1)).replace("\\/", "/").strip()
-            if imagem.startswith("//"):
-                imagem = "https:" + imagem
-            dados["image"] = imagem
+            dados["image"] = unescape(m.group(1)).replace("\\/","/").strip()
             break
 
-    moeda_re = r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2}|[0-9]+(?:\.[0-9]{2})?)"
-
-    # 1) Maior prioridade: relação explícita DE -> POR na parte visível da página.
-    pares_visiveis = []
+    # JSON-LD: usado principalmente para título/imagem e somente como
+    # último recurso para preço.
     for m in re.finditer(
-        rf"(?:de|era|antes)\s*:?\s*(?:<[^>]+>\s*)*{moeda_re}"
-        rf"[^R$]{{0,500}}?"
-        rf"(?:por|agora|preço atual|preco atual)\s*:?\s*(?:<[^>]+>\s*)*{moeda_re}",
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
         html,
         re.I | re.S,
     ):
-        original = moeda(m.group(1))
-        atual = moeda(m.group(2))
-        if original > atual > 0:
-            pares_visiveis.append((original, atual))
+        try:
+            obj = json.loads(unescape(m.group(1).strip()))
+        except Exception:
+            continue
+        objetos = obj if isinstance(obj, list) else [obj]
+        for item in objetos:
+            if not isinstance(item, dict):
+                continue
+            if not dados.get("title") and item.get("name"):
+                dados["title"] = limpar(item.get("name"))
+            if not dados.get("image") and item.get("image"):
+                imagem = item.get("image")
+                if isinstance(imagem, list):
+                    imagem = imagem[0] if imagem else ""
+                dados["image"] = str(imagem or "").replace("\\/","/").strip()
+            offers = item.get("offers")
+            if isinstance(offers, dict):
+                p = moeda(offers.get("price"))
+                if p > 0:
+                    jsonld_prices.append(p)
+            elif isinstance(offers, list):
+                for offer in offers:
+                    if isinstance(offer, dict):
+                        p = moeda(offer.get("price"))
+                        if p > 0:
+                            jsonld_prices.append(p)
 
-    # Também procura no texto visível já sem tags, caso o HTML tenha spans
-    # entre as palavras e os valores.
-    for m in re.finditer(
-        rf"(?:de|era|antes)\s*:?\s*{moeda_re}"
-        rf".{{0,500}}?"
-        rf"(?:por|agora|preço atual|preco atual)\s*:?\s*{moeda_re}",
-        texto,
-        re.I,
-    ):
-        original = moeda(m.group(1))
-        atual = moeda(m.group(2))
-        if original > atual > 0:
-            pares_visiveis.append((original, atual))
+    moeda_re = r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2}|[0-9]+(?:\.[0-9]{2})?)"
 
-    if pares_visiveis:
-        dados["original_price"], dados["price"] = pares_visiveis[0]
+    # Prioridade máxima: par explícito DE/POR.
+    pares = []
+    padroes = (
+        rf"(?:de|era|antes)\s*:?\s*{moeda_re}[^R$]{{0,900}}?(?:por|agora|preço atual|preco atual)\s*:?\s*{moeda_re}",
+        rf"(?:por|agora|preço atual|preco atual)\s*:?\s*{moeda_re}[^R$]{{0,900}}?(?:de|era|antes)\s*:?\s*{moeda_re}",
+    )
+    for indice, pattern in enumerate(padroes):
+        for m in re.finditer(pattern, texto, re.I):
+            original, atual = (moeda(m.group(1)), moeda(m.group(2))) if indice == 0 else (moeda(m.group(2)), moeda(m.group(1)))
+            if original > atual > 0:
+                pares.append((original, atual))
 
-    # 2) Estado estruturado: só aceita pares que estejam próximos e que
-    # representem uma redução real. Não usa o primeiro par arbitrário da página.
-    if not dados.get("price"):
-        candidatos = []
-        padroes = (
-            r'"original_price"\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*,?.{0,500}?"price"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-            r'"price"\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*,?.{0,500}?"original_price"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-            r'"previous_price"\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*,?.{0,500}?"price"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-            r'"price"\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*,?.{0,500}?"previous_price"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-        )
-        for indice, padrao in enumerate(padroes):
-            for m in re.finditer(padrao, html, re.I | re.S):
-                if indice % 2 == 0:
-                    original, atual = float(m.group(1)), float(m.group(2))
-                else:
-                    atual, original = float(m.group(1)), float(m.group(2))
+    if not pares:
+        for indice, pattern in enumerate(padroes):
+            for m in re.finditer(pattern, html, re.I | re.S):
+                original, atual = (moeda(m.group(1)), moeda(m.group(2))) if indice == 0 else (moeda(m.group(2)), moeda(m.group(1)))
                 if original > atual > 0:
-                    candidatos.append((original, atual))
-        if candidatos:
-            # Prefere o maior preço original entre candidatos de promoção,
-            # evitando parcelas pequenas como 3,99.
-            dados["original_price"], dados["price"] = max(candidatos, key=lambda par: par[0])
+                    pares.append((original, atual))
 
-    # 3) Componentes visuais do preço. Ignora explicitamente blocos de
-    # parcelamento e usa pares DE/POR quando existirem.
+    if pares:
+        original, atual = max(pares, key=lambda par: (par[0] - par[1], par[0]))
+        dados["original_price"] = original
+        dados["price"] = atual
+
+    # Segundo nível: preço explicitamente rotulado como atual/oferta.
+    if not dados.get("price"):
+        for pattern in (
+            rf"(?:por|agora|preço atual|preco atual|oferta)\s*:?\s*{moeda_re}",
+            rf"(?:por|agora|preço atual|preco atual|oferta)[^R$]{{0,220}}{moeda_re}",
+        ):
+            m = re.search(pattern, texto, re.I)
+            if m:
+                valor = moeda(m.group(1))
+                if valor > 0:
+                    dados["price"] = valor
+                    break
+
+    # Terceiro nível: preço visual isolado, excluindo parcelas.
     if not dados.get("price"):
         precos = []
         for m in re.finditer(
@@ -227,8 +240,8 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
             html,
             re.I,
         ):
-            trecho = html[max(0, m.start()-700):m.end()+700]
-            if re.search(r"parcela|parcelas|mensal|por mês|por mes", trecho, re.I):
+            trecho = html[max(0, m.start()-1000):m.end()+1000]
+            if re.search(r"parcela|parcelas|mensal|por mês|por mes|cartão|cartao", trecho, re.I):
                 continue
             cents = re.search(
                 r'class=["\'][^"\']*andes-money-amount__cents[^"\']*["\'][^>]*>\s*([0-9]{1,2})\s*<',
@@ -240,26 +253,18 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
                 precos.append(float(m.group(1).replace(".", "") + "." + cent.zfill(2)))
             except ValueError:
                 pass
-        if precos:
-            dados["price"] = min(precos)
+        if len(precos) == 1:
+            dados["price"] = precos[0]
 
-    # 4) Último recurso: preço marcado como "por/agora/oferta".
-    if not dados.get("price"):
-        for pattern in (
-            rf"(?:por|agora|oferta|preço atual|preco atual)\s*:?\s*(?:<[^>]+>\s*)*{moeda_re}",
-            rf"(?:por|agora|oferta|preço atual|preco atual)[^R$]{{0,160}}{moeda_re}",
-        ):
-            m = re.search(pattern, html, re.I | re.S)
-            if m:
-                dados["price"] = moeda(m.group(1))
-                break
+    if not dados.get("price") and jsonld_prices:
+        dados["price"] = jsonld_prices[0]
 
-    # Vendas: tenta o estado estruturado e depois vários formatos visíveis.
+    # Vendas: estruturado + texto visível.
     vendas = 0
     for pattern in (
-        r'"sold_quantity"\s*:\s*"?([0-9]+)"?',
-        r'"soldQuantity"\s*:\s*"?([0-9]+)"?',
-        r'"sold_quantity"\s*:\s*([0-9]+)',
+        r'"sold_quantity"\s*:\s*"?(\d+)"?',
+        r'"soldQuantity"\s*:\s*"?(\d+)"?',
+        r'"sold"\s*:\s*"?(\d+)"?',
     ):
         m = re.search(pattern, html, re.I)
         if m:
@@ -267,12 +272,10 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
             break
 
     if vendas <= 0:
-        padroes_vendas = (
-            r"(?:mais\s+de\s+)?([0-9][0-9.\s]*)\s*(?:unidades?\s*)?(?:vendidos?|vendidas?|vendas)",
-            r"(?:mais\s+de\s+)?([0-9]+(?:[.,][0-9]+)?)\s*(mil|milhão|milhões|mi|k)\s*(?:unidades?\s*)?(?:vendidos?|vendidas?|vendas)",
-            r"([0-9][0-9.]*)\+?\s*(?:vendidos?|vendidas?)",
-        )
-        for pattern in padroes_vendas:
+        for pattern in (
+            r"(?:mais\s+de\s+)?(\d+(?:[.,]\d+)?)\s*(milhão|milhões|mil|mi|k)\s*(?:unidades?\s*)?(?:vendidos?|vendidas?|vendas)",
+            r"(?:mais\s+de\s+)?(\d[\d.\s]*)\+?\s*(?:unidades?\s*)?(?:vendidos?|vendidas?|vendas)",
+        ):
             m = re.search(pattern, texto, re.I)
             if not m:
                 continue
