@@ -1899,98 +1899,81 @@ def formatar_vendas(
 
 def montar_mensagem(
     produto,
+    marketplace=None,
 ):
 
-    nome = (
-        produto.get(
-            "productName"
-        )
-        or "Produto"
-    )
-
-    preco = numero(
-        produto.get(
-            "price"
-        )
-    )
-
-    preco_min = numero(
-        produto.get(
-            "priceMin"
-        )
-    )
-
-    desconto = numero(
-        produto.get(
-            "priceDiscountRate"
-        )
-    )
-
-    avaliacao = numero(
-        produto.get(
-            "ratingStar"
-        )
-    )
-
-    vendas = inteiro(
-        produto.get(
-            "sales"
-        )
-    )
+    nome = produto.get("productName") or "Produto"
+    preco = numero(produto.get("price"))
+    preco_min = numero(produto.get("priceMin"))
+    desconto = numero(produto.get("priceDiscountRate"))
+    avaliacao = numero(produto.get("ratingStar"))
+    vendas = inteiro(produto.get("sales"))
 
     loja = (
-        produto.get(
-            "shopName"
-        )
-        or "Loja Shopee"
+        produto.get("shopName")
+        or ("Mercado Livre" if marketplace == "mercadolivre" else "Loja Shopee")
     )
 
-    preco_atual = preco
+    preco_atual = preco_min if preco_min > 0 else preco
+    original = numero(produto.get("originalPrice"))
 
-    if preco_min > 0:
-        preco_atual = preco_min
-
-    if (
-        desconto > 0
-        and desconto < 100
-        and preco_atual > 0
-    ):
-
-        preco_anterior = (
-            preco_atual
-            / (
-                1
-                - desconto / 100
-            )
-        )
-
+    if original > preco_atual > 0:
+        preco_anterior = original
+    elif desconto > 0 and desconto < 100 and preco_atual > 0:
+        preco_anterior = preco_atual / (1 - desconto / 100)
     else:
-
         preco_anterior = preco_atual
 
-    mensagem = (
-        "🔥 <b>OFERTA EM DESTAQUE</b>\n"
-        "\n"
-        f"✨ <b>{nome}</b>\n"
-        "\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "\n"
-        f"❌ De: <s>{moeda(preco_anterior)}</s>\n"
-        f"💰 <b>Por apenas: {moeda(preco_atual)}</b>\n"
-        f"🏷️ <b>{desconto:.0f}% OFF</b>\n"
-        "\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "\n"
-        f"⭐ <b>{avaliacao:.1f}</b>/5 de avaliação\n"
-        f"📦 <b>{formatar_vendas(vendas)}</b> vendas\n"
-        f"🏪 <b>{loja}</b>\n"
-        "\n"
-        "🚨 <b>Preço sujeito a alteração.</b>\n"
-        "⚡ Aproveite enquanto estiver disponível!"
-    )
+    if marketplace == "mercadolivre":
+        mensagem = (
+            "🟨 <b>OFERTA MERCADO LIVRE</b>\\n"
+            "\\n"
+            f"✨ <b>{nome}</b>\\n"
+            "\\n"
+            "━━━━━━━━━━━━━━━━━━\\n"
+            "\\n"
+            "💰 <b>PREÇO ATUAL</b>\\n"
+            f"<b>{moeda(preco_atual)}</b>\\n"
+            "\\n"
+            + (
+                f"❌ Antes: <s>{moeda(preco_anterior)}</s>\\n"
+                if preco_anterior > preco_atual > 0
+                else ""
+            )
+            + f"🏷️ <b>{desconto:.0f}% OFF</b>\\n"
+            "\\n"
+            "━━━━━━━━━━━━━━━━━━\\n"
+            "\\n"
+            f"⭐ <b>{avaliacao:.1f}</b>/5\\n"
+            f"📦 <b>{formatar_vendas(vendas)}</b> vendas\\n"
+            f"🏪 <b>{loja}</b>\\n"
+            "\\n"
+            "🚨 <b>Preço sujeito a alteração.</b>\\n"
+            "⚡ Aproveite enquanto estiver disponível!"
+        )
+    else:
+        mensagem = (
+            "🟧 <b>ACHADINHO DA SHOPEE</b>\\n"
+            "\\n"
+            f"✨ <b>{nome}</b>\\n"
+            "\\n"
+            "━━━━━━━━━━━━━━━━━━\\n"
+            "\\n"
+            f"💰 De: <s>{moeda(preco_anterior)}</s>\\n"
+            f"🔥 <b>Por: {moeda(preco_atual)}</b>\\n"
+            f"🏷️ <b>{desconto:.0f}% OFF</b>\\n"
+            "\\n"
+            "━━━━━━━━━━━━━━━━━━\\n"
+            "\\n"
+            f"⭐ <b>{avaliacao:.1f}</b>/5\\n"
+            f"📦 <b>{formatar_vendas(vendas)}</b> vendas\\n"
+            f"🏪 <b>{loja}</b>\\n"
+            "\\n"
+            "🚨 <b>Preço sujeito a alteração.</b>\\n"
+            "⚡ Aproveite enquanto estiver disponível!"
+        )
 
     return mensagem
-
 
 # ============================================================
 # PUBLICAR PRODUTO
@@ -2000,10 +1983,12 @@ async def publicar_produto(
     bot: Bot,
     produto: dict[str, Any],
     link_afiliado: str,
+    marketplace=None,
 ):
 
     mensagem = montar_mensagem(
-        produto
+        produto,
+        marketplace=marketplace,
     )
 
     image_url = (
@@ -2183,11 +2168,27 @@ async def processar_produto(
             ),
         )
 
+        marketplace = (
+            "mercadolivre"
+            if any(
+                dominio in link_lower
+                for dominio in (
+                    "mercadolivre.com.br",
+                    "mercadolibre.com",
+                    "meli.la",
+                )
+            )
+            else "shopee"
+        )
+
+        produto["marketplace"] = marketplace
+
         sucesso, message_id = (
             await publicar_produto(
                 bot=bot,
                 produto=produto,
                 link_afiliado=link,
+                marketplace=marketplace,
             )
         )
 
