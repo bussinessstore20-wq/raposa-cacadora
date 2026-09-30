@@ -1908,10 +1908,8 @@ def montar_mensagem(
     desconto = numero(produto.get("priceDiscountRate"))
     avaliacao = numero(produto.get("ratingStar"))
     vendas = inteiro(produto.get("sales"))
-
-    loja = (
-        produto.get("shopName")
-        or ("Mercado Livre" if marketplace == "mercadolivre" else "Loja Shopee")
+    loja = produto.get("shopName") or (
+        "Mercado Livre" if marketplace == "mercadolivre" else "Loja Shopee"
     )
 
     preco_atual = preco_min if preco_min > 0 else preco
@@ -1942,8 +1940,11 @@ def montar_mensagem(
             "\n",
             "━━━━━━━━━━━━━━━━━━\n",
             "\n",
-            f"📦 <b>{formatar_vendas(vendas)}</b> vendas\n",
-            f"🏪 <b>{loja}</b>\n",
+        ])
+        if vendas > 0:
+            partes.append(f"📦 <b>{formatar_vendas(vendas)}</b> vendas\n")
+        partes.extend([
+            "🏪 <b>Mercado Livre</b>\n",
             "\n",
             "🚨 <b>Preço sujeito a alteração.</b>\n",
             "⚡ Aproveite enquanto estiver disponível!",
