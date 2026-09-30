@@ -214,13 +214,19 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
             dados["url"] = match.group(1)
 
     preco = 0.0
+    valor_preco = dados.get("price")
     try:
-        preco = float(str(dados.get("price") or "0").replace(".", "").replace(",", "."))
+        if isinstance(valor_preco, (int, float)):
+            preco = float(valor_preco)
+        else:
+            texto_preco = str(valor_preco or "0").strip().replace("R$", "").replace(" ", "")
+            if "," in texto_preco and "." in texto_preco:
+                texto_preco = texto_preco.replace(".", "").replace(",", ".")
+            elif "," in texto_preco:
+                texto_preco = texto_preco.replace(",", ".")
+            preco = float(texto_preco)
     except (TypeError, ValueError):
-        try:
-            preco = float(dados.get("price") or 0)
-        except (TypeError, ValueError):
-            preco = 0.0
+        preco = 0.0
 
     image = dados.get("image") or ""
     if isinstance(image, list):
