@@ -1937,7 +1937,7 @@ def montar_mensagem(
                 if preco_anterior > preco_atual > 0
                 else ""
             )
-            + f"💰 <b>Por: {moeda(preco_atual)}</b>\\n"
+            + f"💰 <b>Por apenas: {moeda(preco_atual)}</b>\\n"
             + (
                 f"🏷️ <b>{desconto:.0f}% OFF</b>\\n"
                 if desconto > 0
