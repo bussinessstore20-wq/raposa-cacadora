@@ -174,25 +174,61 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
         elif nome == "product:price:amount" and not dados.get("price"):
             dados["price"] = valor
 
-    # Fallbacks para estruturas internas da página.
+    # Conteúdo visível da página: evita confundir campos genéricos como
+    # "name": "Windows" com o título real do anúncio.
     if not dados.get("title"):
         match = re.search(
-            r'"(?:title|name)"\s*:\s*"([^"]{3,300})"',
+            r'<h1[^>]*>(.*?)</h1>',
             html_decodificado,
-            re.IGNORECASE,
+            re.IGNORECASE | re.DOTALL,
         )
         if match:
-            dados["title"] = match.group(1)
+            titulo_h1 = re.sub(r"<[^>]+>", " ", match.group(1))
+            titulo_h1 = re.sub(r"\s+", " ", unescape(titulo_h1)).strip()
+            if len(titulo_h1) >= 3:
+                dados["title"] = titulo_h1
 
     if not dados.get("price"):
-        for padrao in (
-            r'"(?:price|amount)"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)',
-            r'"(?:price|amount)"\s*:\s*\{\s*"value"\s*:\s*([0-9]+(?:[.,][0-9]+)?)',
-        ):
+        padroes_preco = (
+            r'R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})',
+            r'R\$\s*([0-9]+,[0-9]{2})',
+            r'"(?:price|amount|value)"\s*:\s*"?([0-9]+(?:[.,][0-9]+)?)',
+            r'"(?:price|amount|value)"\s*:\s*\{\s*"value"\s*:\s*([0-9]+(?:[.,][0-9]+)?)',
+        )
+        for padrao in padroes_preco:
             match = re.search(padrao, html_decodificado, re.IGNORECASE)
             if match:
                 dados["price"] = match.group(1)
                 break
+
+    # Alguns anúncios exibem preço original, avaliação e quantidade vendida
+    # apenas no texto/render inicial, sem esses valores no JSON-LD.
+    if not dados.get("original_price"):
+        match = re.search(
+            r'(?:de|era|antes)\s*:??\s*R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})',
+            html_decodificado,
+            re.IGNORECASE,
+        )
+        if match:
+            dados["original_price"] = match.group(1)
+
+    if not dados.get("sales"):
+        match = re.search(
+            r'([0-9][0-9.\s]*)\s*(?:unidades?\s*)?vendid[oa]s?',
+            html_decodificado,
+            re.IGNORECASE,
+        )
+        if match:
+            dados["sales"] = re.sub(r"\D", "", match.group(1))
+
+    if not dados.get("rating"):
+        match = re.search(
+            r'(?:avaliac(?:ao|ões|ões)|rating)[^0-9]{0,30}([0-5](?:[.,][0-9]+)?)',
+            html_decodificado,
+            re.IGNORECASE,
+        )
+        if match:
+            dados["rating"] = match.group(1)
 
     if not dados.get("image"):
         match = re.search(
@@ -236,6 +272,32 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
     product_link = _primeiro(dados.get("url"), url_final)
     titulo = _primeiro(dados.get("title"), f"Produto Mercado Livre {item_id}")
 
+    preco_original = 0.0
+    valor_original = dados.get("original_price")
+    try:
+        texto_original = str(valor_original or "0").strip().replace("R$", "").replace(" ", "")
+        if "," in texto_original and "." in texto_original:
+            texto_original = texto_original.replace(".", "").replace(",", ".")
+        elif "," in texto_original:
+            texto_original = texto_original.replace(",", ".")
+        preco_original = float(texto_original)
+    except (TypeError, ValueError):
+        preco_original = 0.0
+
+    desconto = 0.0
+    if preco_original > preco > 0:
+        desconto = ((preco_original - preco) / preco_original) * 100
+
+    try:
+        vendas = int(str(dados.get("sales") or "0").replace(".", "").replace(" ", ""))
+    except (TypeError, ValueError):
+        vendas = 0
+
+    try:
+        avaliacao = float(str(dados.get("rating") or "0").replace(",", "."))
+    except (TypeError, ValueError):
+        avaliacao = 0.0
+
     produto = {
         "productName": titulo,
         "itemId": item_id,
@@ -243,10 +305,10 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
         "price": preco,
         "priceMin": preco,
         "priceMax": preco,
-        "originalPrice": 0.0,
-        "priceDiscountRate": 0.0,
-        "ratingStar": 0,
-        "sales": 0,
+        "originalPrice": preco_original,
+        "priceDiscountRate": desconto,
+        "ratingStar": avaliacao,
+        "sales": vendas,
         "shopName": "Mercado Livre",
         "imageUrl": image,
         "productLink": product_link,
