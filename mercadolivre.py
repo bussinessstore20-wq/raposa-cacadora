@@ -188,29 +188,35 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
             if len(titulo_h1) >= 3:
                 dados["title"] = titulo_h1
 
-    # O Mercado Livre pode expor dois preços: o antigo ("De") e o vigente ("Por").
-    # Capturamos os valores visíveis e usamos o maior como "De" e o menor como "Por".
+    # O Mercado Livre pode expor dois preços: o antigo (De) e o vigente (Por).
     precos_visiveis = []
-    blocos_preco = re.findall(
-        r'class=["\'][^"\']*andes-money-amount__fraction[^"\']*["\'][^>]*>\s*([0-9.]+)\s*<',
-        html_decodificado,
+    precos_anteriores = []
+    precos_atuais = []
+    padrao_fracao = re.compile(
+        r'class=["\\'][^"\\']*andes-money-amount__fraction[^"\\']*["\\'][^>]*>\\s*([0-9.]+)\\s*<',
         re.IGNORECASE,
     )
-    centavos = re.findall(
-        r'class=["\'][^"\']*andes-money-amount__cents[^"\']*["\'][^>]*>\s*([0-9]{1,2})\s*<',
-        html_decodificado,
-        re.IGNORECASE,
-    )
-    for indice, fracao in enumerate(blocos_preco):
+    for match in padrao_fracao.finditer(html_decodificado):
+        trecho = html_decodificado[max(0, match.start() - 1200):match.end() + 500]
+        cents_match = re.search(
+            r'class=["\\'][^"\\']*andes-money-amount__cents[^"\\']*["\\'][^>]*>\\s*([0-9]{1,2})\\s*<',
+            trecho,
+            re.IGNORECASE,
+        )
+        cent = cents_match.group(1) if cents_match else "00"
         try:
-            cent = centavos[indice] if indice < len(centavos) else "00"
-            precos_visiveis.append(float(f"{fracao.replace('.', '')}.{cent.zfill(2)}"))
+            valor = float(f"{match.group(1).replace('.', '')}.{cent.zfill(2)}")
         except ValueError:
             continue
+        precos_visiveis.append(valor)
+        if re.search(r'previous|old|original|strike|de-price|preco-anterior', trecho, re.IGNORECASE):
+            precos_anteriores.append(valor)
+        else:
+            precos_atuais.append(valor)
 
     if not precos_visiveis:
         valores_monetarios = re.findall(
-            r'R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2})',
+            r'R\\$\\s*([0-9]{1,3}(?:\\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2})',
             html_decodificado,
             re.IGNORECASE,
         )
@@ -220,59 +226,46 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
             except ValueError:
                 continue
 
-    if precos_visiveis:
-        # Remove repetições para evitar que o mesmo preço em widgets/JSON altere o resultado.
-        unicos = list(dict.fromkeys(precos_visiveis))
-        if len(unicos) >= 2:
-            dados["original_price"] = max(unicos)
-            dados["price"] = min(unicos)
-        else:
-            dados["price"] = unicos[0]
+    if precos_anteriores:
+        dados["original_price"] = max(precos_anteriores)
+    if precos_atuais:
+        dados["price"] = min(precos_atuais)
 
-    # Alguns anúncios exibem preço original, avaliação e quantidade vendida
-    # apenas no texto/render inicial, sem esses valores no JSON-LD.
-    if not dados.get("original_price"):
-        match = re.search(
-            r'(?:de|era|antes)\s*:??\s*R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2})',
-            html_decodificado,
-            re.IGNORECASE,
-        )
-        if match:
-            dados["original_price"] = match.group(1)
+    if len(set(precos_visiveis)) >= 2:
+        unicos = list(dict.fromkeys(precos_visiveis))
+        dados["original_price"] = dados.get("original_price") or max(unicos)
+        dados["price"] = dados.get("price") or min(unicos)
+    elif precos_visiveis and not dados.get("price"):
+        dados["price"] = precos_visiveis[0]
+
+    match = re.search(
+        r'(?:de|era|antes)\\s*:??\\s*(?:<[^>]+>\\s*)*R\\$\\s*([0-9]{1,3}(?:\\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2})',
+        html_decodificado,
+        re.IGNORECASE,
+    )
+    if match:
+        dados["original_price"] = match.group(1)
 
     if not dados.get("sales"):
         padroes_vendas = (
-            r'(?:mais de\s*)?([0-9][0-9.\s]*(?:mil|mi|milhão|milhões)?)\s*(?:unidades?\s*)?vendid[oa]s?',
-            r'([0-9][0-9.\s]*(?:mil|mi|milhão|milhões)?)\s*vendid[oa]s?',
+            r'(?:mais\\s+de\\s*)?(\\d+(?:[.,]\\d+)?)\\s*(milhões?|mil|mi|k)?\\s*(?:unidades?\\s*)?vendid[oa]s?',
+            r'(?:mais\\s+de\\s*)?(\\d+(?:[.,]\\d+)?)\\s*(milhões?|mil|mi|k)?\\s*(?:unidades?\\s*)?vendas?',
         )
         for padrao in padroes_vendas:
             match = re.search(padrao, html_decodificado, re.IGNORECASE)
             if not match:
                 continue
-            bruto = re.sub(r'\s+', ' ', match.group(1)).strip().lower()
-            numero_match = re.search(r'[0-9]+(?:\.[0-9]+)?', bruto)
-            if not numero_match:
-                continue
             try:
-                numero_base = float(numero_match.group(0).replace('.', ''))
-                multiplicador = (
-                    1_000_000 if 'milhão' in bruto or 'milhões' in bruto
-                    else 1_000 if 'mil' in bruto or bruto.endswith('mi')
-                    else 1
-                )
-                dados["sales"] = int(numero_base * multiplicador)
+                numero_base = float(match.group(1).replace('.', '').replace(',', '.'))
+                unidade = (match.group(2) or '').lower()
+                if unidade in {'mil', 'k'}:
+                    numero_base *= 1_000
+                elif unidade in {'milhão', 'milhões', 'mi'}:
+                    numero_base *= 1_000_000
+                dados["sales"] = int(numero_base)
                 break
             except ValueError:
                 continue
-
-    if not dados.get("rating"):
-        match = re.search(
-            r'(?:avaliac(?:ao|ões|ões)|rating)[^0-9]{0,30}([0-5](?:[.,][0-9]+)?)',
-            html_decodificado,
-            re.IGNORECASE,
-        )
-        if match:
-            dados["rating"] = match.group(1)
 
     if not dados.get("image"):
         match = re.search(
