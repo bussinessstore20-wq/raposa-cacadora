@@ -112,69 +112,19 @@ def _extrair_item_id(url: str, html: str = "") -> str:
 
 def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
     if not html:
-        raise MercadoLivreAPIError(f"Mercado Livre bloqueou a API para {item_id} e não foi possível ler a página.")
+        raise MercadoLivreAPIError(
+            f"Mercado Livre bloqueou a API para {item_id} e não foi possível ler a página."
+        )
+
     html_decodificado = unescape(unquote(html))
     dados = {}
-    def _primeiro(*valores):
-        for valor in valores:
-            if valor is not None:
-                valor = unescape(str(valor)).strip()
-                if valor:
-                    return valor
-        return ""
 
-    for bloco in re.findall(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html_decodificado, re.IGNORECASE | re.DOTALL):
-        try:
-            import json
-            obj = json.loads(bloco.strip())
-        except (ValueError, TypeError):
-            continue
-        for item in (obj if isinstance(obj, list) else [obj]):
-            if isinstance(item, dict) and str(item.get("@type", "")).lower() in {"product", "offer"}:
-                dados["title"] = dados.get("title") or item.get("name")
-                dados["image"] = dados.get("image") or item.get("image")
-                dados["url"] = dados.get("url") or item.get("url")
-
-    if not dados.get("title"):
-        match = re.search(r'<h1[^>]*>(.*?)</h1>', html_decodificado, re.IGNORECASE | re.DOTALL)
-        if match:
-            dados["title"] = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", match.group(1))).strip()
-
-    moeda_re = r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2}|[0-9]+(?:\.[0-9]{2})?)"
-    for padrao in (
-        rf"(?:de|era|antes)\s*:?\s*(?:<[^>]+>\s*)*{moeda_re}",
-        rf"(?:de|era|antes)[^R$]{{0,120}}{moeda_re}",
-    ):
-        match = re.search(padrao, html_decodificado, re.IGNORECASE | re.DOTALL)
-        if match:
-            dados["original_price"] = match.group(1)
-            break
-
-    for padrao in (
-        rf"(?:por|agora|oferta|preço atual|preco atual)\s*:?\s*(?:<[^>]+>\s*)*{moeda_re}",
-        rf"(?:por|agora|oferta|preço atual|preco atual)[^R$]{{0,120}}{moeda_re}",
-    ):
-        match = re.search(padrao, html_decodificado, re.IGNORECASE | re.DOTALL)
-        if match:
-            dados["price"] = match.group(1)
-            break
-
-    valores = []
-    for match in re.finditer(r'class=["\'][^"\']*andes-money-amount__fraction[^"\']*["\'][^>]*>\s*([0-9.]+)\s*<', html_decodificado, re.IGNORECASE):
-        trecho = html_decodificado[max(0, match.start() - 900):match.end() + 500]
-        cents = re.search(r'class=["\'][^"\']*andes-money-amount__cents[^"\']*["\'][^>]*>\s*([0-9]{1,2})\s*<', trecho, re.IGNORECASE)
-        cent = cents.group(1) if cents else "00"
-        try:
-            valores.append(float(match.group(1).replace(".", "") + "." + cent.zfill(2)))
-        except ValueError:
-            pass
-
-    if not valores:
-        for valor in re.findall(r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2})", html_decodificado):
-            try:
-                valores.append(float(valor.replace(".", "").replace(",", ".")))
-            except ValueError:
-                pass
+    def _limpar_html(valor):
+        return re.sub(
+            r"\\s+",
+            " ",
+            re.sub(r"<[^>]+>", " ", unescape(str(valor or ""))),
+        ).strip()
 
     def _float_moeda(valor):
         try:
@@ -187,51 +137,183 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
         except (TypeError, ValueError):
             return 0.0
 
-    if not dados.get("price") and len(set(valores)) >= 2:
-        dados["price"] = min(valores)
-    if not dados.get("original_price") and len(set(valores)) >= 2:
-        dados["original_price"] = max(valores)
-    if not dados.get("price") and valores:
-        dados["price"] = valores[0]
-
-    padroes_vendas = (
-        r'"(?:sold_quantity|soldQuantity)"\s*:\s*([0-9]+)',
-        r'(?:mais\s+de\s*)?([0-9]+(?:[.,][0-9]+)?)\s*(milhões?|mil|mi|k)\s*(?:unidades?\s*)?(?:vendid[oa]s?|vendas)',
-        r'(?:mais\s+de\s*)?([0-9][0-9.\s]*)\s*(?:unidades?\s*)?(?:vendid[oa]s?|vendas)',
-    )
-    for indice, padrao in enumerate(padroes_vendas):
-        match = re.search(padrao, html_decodificado, re.IGNORECASE)
-        if not match:
-            continue
+    def _numero_bruto(valor):
         try:
-            texto = match.group(1).replace(".", "").replace(",", ".").strip()
-            numero_vendas = float(texto)
-            if indice == 1:
-                unidade = match.group(2).lower()
-                if unidade in {"mil", "k"}:
-                    numero_vendas *= 1000
-                elif unidade in {"milhão", "milhões", "mi"}:
-                    numero_vendas *= 1000000
-            dados["sales"] = int(numero_vendas)
-            break
-        except (ValueError, TypeError):
-            continue
+            return float(str(valor).replace(".", "").replace(",", "."))
+        except (TypeError, ValueError):
+            return 0.0
 
-    if not dados.get("image"):
-        match = re.search(r'"(?:secure_url|url)"\s*:\s*"(https?:[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', html_decodificado, re.IGNORECASE)
+    # Metadados da própria página: mais confiáveis para título e imagem.
+    for padrao in (
+        r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
+        r'<meta[^>]+name=["\']twitter:title["\'][^>]+content=["\']([^"\']+)',
+    ):
+        match = re.search(padrao, html_decodificado, re.IGNORECASE)
+        if match and not dados.get("title"):
+            dados["title"] = _limpar_html(match.group(1))
+
+    for padrao in (
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)',
+        r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)',
+    ):
+        match = re.search(padrao, html_decodificado, re.IGNORECASE)
+        if match and not dados.get("image"):
+            dados["image"] = unescape(match.group(1)).strip()
+
+    match = re.search(
+        r'<h1[^>]*>(.*?)</h1>',
+        html_decodificado,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        dados["title"] = _limpar_html(match.group(1))
+
+    # Dados estruturados do anúncio. Não usamos JSON-LD para preço, porque
+    # ele pode conservar um preço antigo enquanto a página mostra uma oferta.
+    campos = {
+        "title": (
+            r'"(?:title|name)"\\s*:\\s*"([^"]{5,300})"',
+        ),
+        "image": (
+            r'"(?:secure_url|thumbnail|image)"\\s*:\\s*"(https?:[^"]+)"',
+        ),
+    }
+    for campo, padroes in campos.items():
+        if dados.get(campo):
+            continue
+        for padrao in padroes:
+            match = re.search(padrao, html_decodificado, re.IGNORECASE)
+            if match:
+                dados[campo] = unescape(match.group(1))
+                break
+
+    # Captura pares price/original_price do mesmo bloco de dados.
+    pares = []
+    for match in re.finditer(
+        r'"original_price"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)'
+        r'.{0,1200}?'
+        r'"price"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)',
+        html_decodificado,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        original = float(match.group(1))
+        atual = float(match.group(2))
+        if original > atual > 0:
+            pares.append((original, atual))
+
+    for match in re.finditer(
+        r'"price"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)'
+        r'.{0,1200}?'
+        r'"original_price"\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)',
+        html_decodificado,
+        re.IGNORECASE | re.DOTALL,
+    ):
+        atual = float(match.group(1))
+        original = float(match.group(2))
+        if original > atual > 0:
+            pares.append((original, atual))
+
+    if pares:
+        # Preferimos o par economicamente consistente do anúncio.
+        original, atual = pares[0]
+        dados["original_price"] = original
+        dados["price"] = atual
+
+    # Fallback para texto visível explicitamente associado a "de" e "por".
+    moeda_re = r"R\\$\\s*([0-9]{1,3}(?:\\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2}|[0-9]+(?:\\.[0-9]{2})?)"
+
+    if not dados.get("original_price"):
+        for padrao in (
+            rf"(?:de|era|antes)\\s*:?\\s*(?:<[^>]+>\\s*)*{moeda_re}",
+            rf"(?:de|era|antes)[^R$]{{0,100}}{moeda_re}",
+        ):
+            match = re.search(padrao, html_decodificado, re.IGNORECASE | re.DOTALL)
+            if match:
+                dados["original_price"] = match.group(1)
+                break
+
+    if not dados.get("price"):
+        for padrao in (
+            rf"(?:por|agora|oferta|preço atual|preco atual)\\s*:?\\s*(?:<[^>]+>\\s*)*{moeda_re}",
+            rf"(?:por|agora|oferta|preço atual|preco atual)[^R$]{{0,100}}{moeda_re}",
+        ):
+            match = re.search(padrao, html_decodificado, re.IGNORECASE | re.DOTALL)
+            if match:
+                dados["price"] = match.group(1)
+                break
+
+    # Como último recurso, usa o preço em classes monetárias. Não usa min/max,
+    # pois isso misturava preço de variantes, frete ou componentes da página.
+    if not dados.get("price"):
+        visiveis = []
+        for match in re.finditer(
+            r'class=["\'][^"\']*andes-money-amount__fraction[^"\']*["\'][^>]*>\\s*([0-9.]+)\\s*<',
+            html_decodificado,
+            re.IGNORECASE,
+        ):
+            trecho = html_decodificado[max(0, match.start() - 350):match.end() + 350]
+            cents = re.search(
+                r'class=["\'][^"\']*andes-money-amount__cents[^"\']*["\'][^>]*>\\s*([0-9]{1,2})\\s*<',
+                trecho,
+                re.IGNORECASE,
+            )
+            cent = cents.group(1) if cents else "00"
+            try:
+                visiveis.append(float(match.group(1).replace(".", "") + "." + cent.zfill(2)))
+            except ValueError:
+                pass
+        if visiveis:
+            dados["price"] = visiveis[0]
+
+    # Vendas: sold_quantity do estado interno ou texto "X vendidos".
+    vendas = 0
+    for padrao in (
+        r'"(?:sold_quantity|soldQuantity)"\\s*:\\s*([0-9]+)',
+        r'"(?:sold_quantity|soldQuantity)"\\s*:\\s*"([0-9]+)"',
+    ):
+        match = re.search(padrao, html_decodificado, re.IGNORECASE)
         if match:
-            dados["image"] = match.group(1)
-    if not dados.get("url"):
-        match = re.search(r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)', html_decodificado, re.IGNORECASE)
-        if match:
-            dados["url"] = match.group(1)
+            vendas = int(match.group(1))
+            break
+
+    if vendas <= 0:
+        for padrao in (
+            r'(?:mais\\s+de\\s*)?([0-9][0-9.\\s]*)\\s*(?:unidades?\\s*)?(?:vendid[oa]s?|vendas)',
+            r'(?:mais\\s+de\\s*)?([0-9]+(?:[.,][0-9]+)?)\\s*(mil(?:hão|hões)?|mi|k)\\s*(?:unidades?\\s*)?(?:vendid[oa]s?|vendas)',
+        ):
+            match = re.search(padrao, html_decodificado, re.IGNORECASE)
+            if not match:
+                continue
+            try:
+                texto = match.group(1).replace(".", "").replace(" ", "").replace(",", ".")
+                vendas = int(float(texto))
+                if match.lastindex and match.lastindex >= 2:
+                    unidade = match.group(2).lower()
+                    if unidade in {"mil", "k"}:
+                        vendas *= 1000
+                    elif unidade in {"milhão", "milhões", "mi"}:
+                        vendas *= 1000000
+                break
+            except (ValueError, TypeError):
+                pass
 
     preco = _float_moeda(dados.get("price"))
     preco_original = _float_moeda(dados.get("original_price"))
-    desconto = ((preco_original - preco) / preco_original * 100) if preco_original > preco > 0 else 0.0
+
+    if preco_original <= preco or preco <= 0:
+        preco_original = 0.0
+
+    desconto = (
+        ((preco_original - preco) / preco_original) * 100
+        if preco_original > preco > 0
+        else 0.0
+    )
+
+    titulo = _limpar_html(dados.get("title")) or f"Produto Mercado Livre {item_id}"
+    imagem = _limpar_html(dados.get("image"))
 
     produto = {
-        "productName": _primeiro(dados.get("title"), f"Produto Mercado Livre {item_id}"),
+        "productName": titulo,
         "itemId": item_id,
         "shopId": None,
         "price": preco,
@@ -240,18 +322,30 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
         "originalPrice": preco_original,
         "priceDiscountRate": desconto,
         "ratingStar": 0,
-        "sales": int(dados.get("sales") or 0),
+        "sales": vendas,
         "shopName": "Mercado Livre",
-        "imageUrl": _primeiro(dados.get("image")),
-        "productLink": _primeiro(dados.get("url"), url_final),
-        "offerLink": _primeiro(dados.get("url"), url_final),
+        "imageUrl": imagem,
+        "productLink": url_final,
+        "offerLink": url_final,
         "manualAffiliateLink": url_final,
         "affiliateLink": url_final,
         "marketplace": "mercadolivre",
     }
+
     if not produto["productName"] and not produto["imageUrl"] and not produto["price"]:
-        raise MercadoLivreAPIError(f"Mercado Livre bloqueou a API para {item_id} e a página não expôs dados do produto.")
-    logger.info("Produto Mercado Livre obtido pela página: %s | item=%s | preço=%s | original=%s | vendas=%s", produto["productName"], item_id, preco, preco_original, produto["sales"])
+        raise MercadoLivreAPIError(
+            f"Mercado Livre bloqueou a API para {item_id} e a página não expôs dados do produto."
+        )
+
+    logger.info(
+        "Mercado Livre fallback: item=%s | título=%s | preço=%s | original=%s | vendas=%s | imagem=%s",
+        item_id,
+        titulo,
+        preco,
+        preco_original,
+        vendas,
+        bool(imagem),
+    )
     return produto
 
 def buscar_produto_por_link(link: str) -> dict:
