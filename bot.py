@@ -1016,6 +1016,58 @@ class HealthHandler(
     def do_POST(self):
         path = self.path.split("?", 1)[0]
 
+        if path == "/api/queue":
+            length = int(self.headers.get("Content-Length", "0"))
+            try:
+                dados = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+                init_data = str(dados.get("initData") or self.headers.get("X-Telegram-Init-Data") or "")
+                if not validar_telegram_webapp(init_data):
+                    self._json_body(401, {"ok": False, "error": "telegram_auth_invalid"})
+                    return
+                user = extrair_usuario_webapp(init_data)
+                if not user or int(user.get("id", 0)) != int(TELEGRAM_ADMIN_ID):
+                    self._json_body(403, {"ok": False, "error": "usuario_nao_autorizado"})
+                    return
+                action = str(dados.get("action") or "").strip().lower()
+                if action == "retry":
+                    resposta = (
+                        supabase.table("produtos_fila")
+                        .update({"status": "pending", "erro": None, "processing_at": None})
+                        .eq("fila_origem", FILA_ORIGEM)
+                        .eq("bot_id", BOT_ID)
+                        .eq("status", "error")
+                        .execute()
+                    )
+                    quantidade = len(resposta.data or [])
+                    registrar_auditoria(
+                        "panel_queue_retry", "produtos_fila", None, "error", "pending",
+                        {"quantidade": quantidade, "telegram_user_id": user.get("id")}
+                    )
+                    self._json_body(200, {
+                        "ok": True,
+                        "action": action,
+                        "quantidade": quantidade,
+                        "message": f"{quantidade} produto(s) reprocessado(s)."
+                    })
+                    return
+                if action == "list":
+                    rows = (
+                        supabase.table("produtos_fila")
+                        .select("id,link,status,product_name,created_at,processing_at,erro")
+                        .eq("fila_origem", FILA_ORIGEM)
+                        .eq("bot_id", BOT_ID)
+                        .order("created_at", desc=False)
+                        .limit(100)
+                        .execute()
+                    ).data or []
+                    self._json_body(200, {"ok": True, "items": rows})
+                    return
+                self._json_body(400, {"ok": False, "error": "acao_fila_invalida"})
+            except Exception as erro:
+                logger.exception("Erro no controle da fila: %s", erro)
+                self._json_body(500, {"ok": False, "error": "internal_error", "message": str(erro)})
+            return
+
         if path == "/webhook/manus":
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length)
