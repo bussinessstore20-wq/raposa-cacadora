@@ -112,14 +112,16 @@ def _extrair_item_id(url: str, html: str = "") -> str:
 
 def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
     if not html:
-        raise MercadoLivreAPIError(
-            f"Mercado Livre bloqueou a API para {item_id} e não foi possível ler a página."
-        )
+        raise MercadoLivreAPIError(f"Mercado Livre bloqueou a API para {item_id} e não foi possível ler a página.")
 
     import json
 
     html = unescape(unquote(html)).replace("\\/","/")
-    texto = re.sub(r"\\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
+
+    def limpar(valor):
+        valor = unescape(str(valor or ""))
+        valor = re.sub(r"<[^>]+>", " ", valor)
+        return re.sub(r"\s+", " ", valor).strip()
 
     def moeda(valor):
         try:
@@ -132,13 +134,10 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
         except (TypeError, ValueError):
             return 0.0
 
-    def limpar(valor):
-        return re.sub(r"\\s+", " ", re.sub(r"<[^>]+>", " ", unescape(str(valor or "")))).strip()
-
+    texto = limpar(html)
     dados = {}
     jsonld_prices = []
 
-    # Título e imagem: primeiro elementos explícitos da página.
     for pattern in (
         r'<h1[^>]*>(.*?)</h1>',
         r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
@@ -147,25 +146,25 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
         m = re.search(pattern, html, re.I | re.S)
         if m:
             titulo = limpar(m.group(1))
-            if titulo and not titulo.lower().startswith(("mercado livre", "produto mercado livre")):
+            if titulo and "mercado livre" not in titulo.lower():
                 dados["title"] = titulo
                 break
 
     for pattern in (
         r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)',
         r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)',
+        r'"(?:secure_url|url)"\s*:\s*"(https?://[^"]+)"',
     ):
-        m = re.search(pattern, html, re.I)
+        m = re.search(pattern, html, re.I | re.S)
         if m:
-            dados["image"] = unescape(m.group(1)).replace("\\/","/").strip()
-            break
+            imagem = unescape(m.group(1)).replace("\\/","/").strip()
+            if imagem.startswith("http"):
+                dados["image"] = imagem
+                break
 
-    # JSON-LD é confiável para título/imagem, mas NÃO é usado como preço
-    # enquanto houver qualquer preço visual do anúncio.
     for m in re.finditer(
-        r'<script[^>]+type=["\']application/ld\\+json["\'][^>]*>(.*?)</script>',
-        html,
-        re.I | re.S,
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html, re.I | re.S,
     ):
         try:
             obj = json.loads(unescape(m.group(1).strip()))
@@ -190,130 +189,83 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
                     if p > 0:
                         jsonld_prices.append(p)
 
-    moeda_re = r"R\\$\\s*([0-9]{1,3}(?:\\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2}|[0-9]+(?:\\.[0-9]{2})?)"
-
-    # 1) Tenta o par explícito "De ... Por ...".
-    pares = []
-    padroes = (
-        rf"(?:de|era|antes)\\s*:?\\s*{moeda_re}[^R$]{{0,900}}?(?:por|agora|preço atual|preco atual)\\s*:?\\s*{moeda_re}",
-        rf"(?:por|agora|preço atual|preco atual)\\s*:?\\s*{moeda_re}[^R$]{{0,900}}?(?:de|era|antes)\\s*:?\\s*{moeda_re}",
+    currency_re = re.compile(
+        r"R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}|[0-9]+,[0-9]{2}|[0-9]+(?:\.[0-9]{2})?)",
+        re.I,
     )
-    for indice, pattern in enumerate(padroes):
-        for m in re.finditer(pattern, texto, re.I):
-            original, atual = (
-                (moeda(m.group(1)), moeda(m.group(2)))
-                if indice == 0 else
-                (moeda(m.group(2)), moeda(m.group(1)))
-            )
+    limite_principal = re.split(
+        r"ver\s+meios\s+de\s+pagamento|meios\s+de\s+pagamento|formas\s+de\s+pagamento",
+        texto, maxsplit=1, flags=re.I,
+    )[0]
+
+    valores = []
+    vistos = set()
+    for match in currency_re.finditer(limite_principal):
+        valor = moeda(match.group(0))
+        if valor > 0 and valor not in vistos:
+            valores.append(valor)
+            vistos.add(valor)
+
+    pares = []
+    padroes_par = (
+        r"(?:de|era|antes)\s*:?\s*(R\$\s*[0-9][0-9.]*[,\.][0-9]{2}).{0,500}?(?:por|agora|preço\s+atual|preco\s+atual)\s*:?\s*(R\$\s*[0-9][0-9.]*[,\.][0-9]{2})",
+        r"(?:por|agora|preço\s+atual|preco\s+atual)\s*:?\s*(R\$\s*[0-9][0-9.]*[,\.][0-9]{2}).{0,500}?(?:de|era|antes)\s*:?\s*(R\$\s*[0-9][0-9.]*[,\.][0-9]{2})",
+    )
+    for indice, pattern in enumerate(padroes_par):
+        m = re.search(pattern, limite_principal, re.I | re.S)
+        if m:
+            if indice == 0:
+                original, atual = moeda(m.group(1)), moeda(m.group(2))
+            else:
+                atual, original = moeda(m.group(1)), moeda(m.group(2))
             if original > atual > 0:
                 pares.append((original, atual))
 
-    # 2) Extrai os blocos monetários reais do anúncio.
-    #    O preço antigo costuma ter a classe "previous"; parcelas são
-    #    descartadas por contexto. Se houver dois preços sem rótulo,
-    #    o maior é "de" e o menor é "por".
-    precos_visiveis = []
-    money_pattern = re.compile(
-        r'<(?:div|span)[^>]+class=["\'][^"\']*andes-money-amount[^"\']*["\'][^>]*>.*?</(?:div|span)>',
-        re.I | re.S,
-    )
-    for bloco in money_pattern.findall(html):
-        valor_m = re.search(
-            r'andes-money-amount__fraction[^>]*>\\s*([0-9.]+)',
-            bloco,
-            re.I,
-        )
-        if not valor_m:
-            continue
-        valor = moeda(valor_m.group(1))
-        cents_m = re.search(
-            r'andes-money-amount__cents[^>]*>\\s*([0-9]{1,2})',
-            bloco,
-            re.I,
-        )
-        if cents_m:
-            valor += int(cents_m.group(1).zfill(2)) / 100
-
-        contexto = texto[max(0, html.find(bloco)-700):min(len(texto), html.find(bloco)+700)]
-        if re.search(
-            r'\\d+\\s*x\\s*R\\$|parcela|parcelas|mensal|por mês|por mes|cartão|cartao|sem juros',
-            contexto,
-            re.I,
-        ):
-            continue
-
-        classe_previous = bool(re.search(r'andes-money-amount--previous|previous', bloco, re.I))
-        precos_visiveis.append((valor, classe_previous))
-
-    if not pares and precos_visiveis:
-        antigos = [valor for valor, previous in precos_visiveis if previous]
-        atuais = [valor for valor, previous in precos_visiveis if not previous and valor > 0]
-
-        if antigos and atuais:
-            atual = min(atuais, key=lambda v: abs(v - min(atuais)))
-            original = max(antigos)
-            if original > atual:
-                pares.append((original, atual))
-        elif len(atuais) >= 2:
-            ordenados = sorted(set(atuais), reverse=True)
-            if ordenados[0] > ordenados[1]:
-                pares.append((ordenados[0], ordenados[1]))
-        elif len(atuais) == 1:
-            dados["price"] = atuais[0]
-
     if pares:
-        original, atual = max(pares, key=lambda par: (par[0] - par[1], par[0]))
-        dados["original_price"] = original
-        dados["price"] = atual
+        dados["original_price"], dados["price"] = pares[0]
+    elif len(valores) >= 2 and valores[0] > valores[1] > 0:
+        dados["original_price"], dados["price"] = valores[0], valores[1]
+    elif valores:
+        dados["price"] = valores[0]
 
-    # 3) Preço rotulado como atual/oferta.
-    if not dados.get("price"):
-        for pattern in (
-            rf"(?:por|agora|preço atual|preco atual|oferta)\\s*:?\\s*{moeda_re}",
-            rf"(?:por|agora|preço atual|preco atual|oferta)[^R$]{{0,220}}{moeda_re}",
-        ):
-            m = re.search(pattern, texto, re.I)
-            if m:
-                valor = moeda(m.group(1))
-                if valor > 0:
-                    dados["price"] = valor
-                    break
-
-    # JSON-LD só entra se não houver nenhum preço visual/rotulado.
     if not dados.get("price") and jsonld_prices:
         dados["price"] = jsonld_prices[0]
 
-    # Vendas: nunca inventar. Só preenche quando a página realmente informa.
+    def converter_quantidade(numero_texto, unidade=""):
+        s = str(numero_texto or "").replace(".", "").replace(",", ".").replace(" ", "")
+        try:
+            valor = float(s)
+        except (TypeError, ValueError):
+            return 0
+        unidade = str(unidade or "").lower()
+        if unidade in ("mil", "k"):
+            valor *= 1000
+        elif unidade in ("milhão", "milhões", "mi"):
+            valor *= 1000000
+        return int(valor)
+
     vendas = 0
     for pattern in (
-        r'"sold_quantity"\\s*:\\s*"?([0-9]+)"?',
-        r'"soldQuantity"\\s*:\\s*"?([0-9]+)"?',
-        r'"sold"\\s*:\\s*"?([0-9]+)"?',
+        r"\+?\s*([0-9][0-9.,\s]*)\s*(milhão|milhões|mil|mi|k)?\s+(?:unidades?\s+)?vendidos?",
+        r"\+?\s*([0-9][0-9.,\s]*)\s*(milhão|milhões|mil|mi|k)?\s+(?:unidades?\s+)?vendidas?",
+        r"\+?\s*([0-9][0-9.,\s]*)\s*(milhão|milhões|mil|mi|k)?\s+vendas",
     ):
-        m = re.search(pattern, html, re.I)
+        m = re.search(pattern, texto, re.I)
         if m:
-            vendas = int(m.group(1))
-            break
+            vendas = converter_quantidade(m.group(1), m.group(2))
+            if vendas > 0:
+                break
 
     if vendas <= 0:
         for pattern in (
-            r"(?:mais\\s+de\\s+)?([0-9][0-9.\\s]*)\\+?\\s*(milhão|milhões|mil|mi|k)?\\s*(?:unidades?\\s*)?(?:vendidos?|vendidas?|vendas)",
-            r"(?:vendidos?|vendidas?|vendas)\\s*[:：]?\\s*([0-9][0-9.\\s]*)",
+            r'"sold_quantity"\s*:\s*"?([0-9]+)"?',
+            r'"soldQuantity"\s*:\s*"?([0-9]+)"?',
+            r'"sold"\s*:\s*"?([0-9]+)"?',
         ):
-            m = re.search(pattern, texto, re.I)
-            if not m:
-                continue
-            try:
-                valor = float(m.group(1).replace(".", "").replace(" ", "").replace(",", "."))
-                unidade = (m.group(2) or "").lower() if m.lastindex and m.lastindex >= 2 else ""
-                if unidade in ("mil", "k"):
-                    valor *= 1000
-                elif unidade in ("milhão", "milhões", "mi"):
-                    valor *= 1000000
-                vendas = int(valor)
+            m = re.search(pattern, html, re.I)
+            if m:
+                vendas = int(m.group(1))
                 break
-            except (TypeError, ValueError):
-                pass
 
     preco = moeda(dados.get("price"))
     original = moeda(dados.get("original_price"))
@@ -323,6 +275,9 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
     desconto = ((original - preco) / original * 100) if original > preco > 0 else 0.0
     titulo = limpar(dados.get("title")) or f"Produto Mercado Livre {item_id}"
     imagem = limpar(dados.get("image"))
+
+    if preco <= 0:
+        raise MercadoLivreAPIError(f"Não foi possível identificar o preço atual do anúncio {item_id}.")
 
     return {
         "productName": titulo,
