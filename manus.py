@@ -570,6 +570,15 @@ def listar_mensagens_tarefa(
                 time.sleep(1.5 * (tentativa + 1))
                 continue
             return _parse_response(response, "task.listMessages")
+        except ManusAPIError as exc:
+            if str(exc).startswith(("MANUS_HTTP_500:", "MANUS_HTTP_502:", "MANUS_HTTP_503:", "MANUS_HTTP_504:")) and tentativa < 2:
+                logger.warning(
+                    "Manus task.listMessages falhou com erro 5xx (%s); nova tentativa %s/3.",
+                    exc, tentativa + 2,
+                )
+                time.sleep(1.5 * (tentativa + 1))
+                continue
+            raise
         except requests.exceptions.RequestException as exc:
             ultimo_erro = exc
             if tentativa >= 2:
