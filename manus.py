@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import re
+import time
 from typing import Any
 
 import requests
@@ -202,6 +204,43 @@ def _normalizar_produto(
     }
 
 
+def _referencias_tarefas_anteriores() -> list[str]:
+    """Retorna tarefas antigas concluídas para o Manus reutilizar o padrão visual."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    try:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/instagram_posts",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+            },
+            params={
+                "bot_id": f"eq.{BOT_ID}",
+                "status": "in.(ready,published)",
+                "select": "id,manus_task_id",
+                "manus_task_id": "not.is.null",
+                "order": "id.desc",
+                "limit": "10",
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        referencias = []
+        for row in rows if isinstance(rows, list) else []:
+            task_id = str(row.get("manus_task_id") or "").strip()
+            if re.fullmatch(r"[A-Za-z0-9]{22}", task_id) and task_id not in referencias:
+                referencias.append(task_id)
+            if len(referencias) >= 3:
+                break
+        logger.info("Referências visuais de carrosséis anteriores carregadas: %s", len(referencias))
+        return referencias
+    except Exception:
+        logger.exception("Não foi possível carregar referências visuais anteriores; seguindo sem elas.")
+        return []
+
+
 def criar_tarefa_carrossel(
     produtos: list[dict[str, Any]],
     post_id: int,
@@ -277,8 +316,10 @@ def criar_tarefa_carrossel(
 {prompt_base}
 
 EXECUÇÃO DO LOTE #{post_id} — PLATAFORMA: {plataforma_label}
+REFERÊNCIA VISUAL OBRIGATÓRIA: consulte as tarefas anteriores anexadas como referências. Use as imagens finais dessas tarefas como modelo visual canônico da Raposa Caçadora. Reproduza o mesmo sistema visual: composição e enquadramento, paleta, fundos, iluminação, tipografia, hierarquia e posição dos textos, margens, escala do produto, tratamento fotográfico, elementos gráficos, assinatura/watermark e consistência entre capa e slides. Não invente uma nova direção artística, não redesenhe a marca e não copie os textos nem os produtos antigos; reutilize somente o padrão visual.
 Crie exatamente 6 imagens: 1 capa + 5 slides de produto, em formato vertical 4:5 (1080x1350).
 Use somente os 5 produtos abaixo, na ordem fornecida. Preserve a identidade visual da Raposa Caçadora e as características reais de cada produto. Use a imagem correspondente de cada produto quando houver image_url. Não invente dados, preços, descontos, benefícios ou características. Não misture plataformas.
+Se as tarefas de referência não estiverem acessíveis, mantenha rigorosamente o padrão editorial já descrito no prompt salvo: estética Pinterest/cozy quando compatível com o tema, acabamento premium, composição limpa, identidade Raposa Caçadora consistente e mesma linguagem visual em todos os slides.
 Retorne a categoria, subcategoria, conceito, legenda completa e os 5 slides com position, product_id, headline, benefit e asset_url.
 
 DADOS DOS 5 PRODUTOS:
@@ -298,6 +339,7 @@ DADOS DOS 5 PRODUTOS:
             "Reduza o prompt editorial salvo em bot_settings.instagram_prompt."
         )
 
+    referencias_visuais = _referencias_tarefas_anteriores()
     payload = {
         "message": {
             "content": [
@@ -306,7 +348,8 @@ DADOS DOS 5 PRODUTOS:
                     "text": prompt_final,
                     "visibility": "visible",
                 }
-            ]
+            ],
+            **({"task_references": referencias_visuais} if referencias_visuais else {}),
         },
 
         "title": (
@@ -510,20 +553,30 @@ def listar_mensagens_tarefa(
             "task_id ausente."
         )
 
-    response = requests.get(
-        f"{MANUS_API_URL}/v2/task.listMessages",
-        headers={
-            "x-manus-api-key": MANUS_API_KEY,
-        },
-        params={
-            "task_id": task_id,
-            "order": "desc",
-            "limit": 200,
-        },
-        timeout=60,
-    )
-
-    return _parse_response(
-        response,
-        "task.listMessages",
-    )
+    ultimo_erro: Exception | None = None
+    for tentativa in range(3):
+        try:
+            response = requests.get(
+                f"{MANUS_API_URL}/v2/task.listMessages",
+                headers={"x-manus-api-key": MANUS_API_KEY},
+                params={"task_id": task_id, "order": "desc", "limit": 200},
+                timeout=60,
+            )
+            if response.status_code >= 500 and tentativa < 2:
+                logger.warning(
+                    "Manus task.listMessages respondeu HTTP %s; nova tentativa %s/3.",
+                    response.status_code, tentativa + 2,
+                )
+                time.sleep(1.5 * (tentativa + 1))
+                continue
+            return _parse_response(response, "task.listMessages")
+        except requests.exceptions.RequestException as exc:
+            ultimo_erro = exc
+            if tentativa >= 2:
+                raise
+            logger.warning(
+                "Falha transitória em task.listMessages (%s); nova tentativa %s/3.",
+                exc, tentativa + 2,
+            )
+            time.sleep(1.5 * (tentativa + 1))
+    raise ManusAPIError(f"MANUS_MESSAGES_UNAVAILABLE: {ultimo_erro}")
