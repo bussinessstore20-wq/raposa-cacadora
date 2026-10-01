@@ -30,7 +30,7 @@ BOT_ID = os.getenv("BOT_ID", os.getenv("FILA_ORIGEM", "raposa-cacadora")).strip(
 def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-def _legenda_valida(caption: str, quantidade: int) -> bool:
+def _legenda_valida(caption: str, quantidade: int, marketplace: str = "shopee") -> bool:
     texto = str(caption or "").strip()
     if not texto or re.search(r"https?://|www\\.", texto, re.I): return False
     proibidos = (r"links? dos achadinhos", r"encontre os links", r"links? na ordem", r"acesse os links", r"link de cada produto")
@@ -72,7 +72,7 @@ def _persistir_attachments_storage(supabase: Client, post_id: int, attachments: 
             logger.exception("Falha ao persistir imagem Manus: carrossel=%s anexo=%s erro=%s",post_id,attachment_index,exc)
     return salvos
 
-def _normalizar_legenda(caption: str, produtos: list[dict[str, Any]]) -> str:
+def _normalizar_legenda(caption: str, produtos: list[dict[str, Any]], marketplace: str = "shopee") -> str:
     texto=str(caption or "").strip(); texto=re.sub(r"https?://\\S+","",texto); texto=re.sub(r"\\n?Links? dos achadinhos:?\\s*","",texto,flags=re.I); texto=re.sub(r"\\n?Encontre os links[^\\n]*","",texto,flags=re.I); texto=re.sub(r"\\n?Acesse os links[^\\n]*","",texto,flags=re.I); texto=re.sub(r"\\n?Links? na ordem[^\\n]*","",texto,flags=re.I); texto=re.sub(r"\\n{3,}","\\n\\n",texto).strip()
     nomes=[str(p.get("productName") or p.get("product_name") or p.get("name") or "Achadinho").strip() for p in produtos]
     if not re.search(r"1️⃣|1\\.\\s",texto): texto += "\\n\\n"+"\\n".join(f"{i}️⃣ {nome}" for i,nome in enumerate(nomes,1))
@@ -80,17 +80,36 @@ def _normalizar_legenda(caption: str, produtos: list[dict[str, Any]]) -> str:
     if not re.search(r"#(?:achadosshopee|shopee|raposacacadora)\\b",texto,re.I): texto += "\\n\\n#achadosshopee #shopee #raposacacadora"
     return texto
 
+def _marketplace_from_link(link: str) -> str:
+    texto = str(link or "").lower()
+    if any(dominio in texto for dominio in ("mercadolivre.com.br", "mercadolibre.com", "meli.la")):
+        return "mercadolivre"
+    return "shopee"
+
+
 def criar_lote_instagram(supabase: Client, produto_ids: list[int], source_chat_id: str | None = None, source_message_id: int | None = None, bot_id: str | None = None) -> int | None:
-    if not produto_ids: return None
-    ids=list(dict.fromkeys(int(x) for x in produto_ids)); bot_id=(bot_id or BOT_ID).strip(); primeiro_post_id=None
-    for inicio in range(0,len(ids),INSTAGRAM_BATCH_SIZE):
-        grupo=ids[inicio:inicio+INSTAGRAM_BATCH_SIZE]
-        if len(grupo)<INSTAGRAM_BATCH_SIZE: logger.info("Grupo Instagram aguardando completar %d produtos: %d/%d.",INSTAGRAM_BATCH_SIZE,len(grupo),INSTAGRAM_BATCH_SIZE); continue
-        post=supabase.table("instagram_posts").insert({"status":"pending","bot_id":bot_id,"source_chat_id":source_chat_id,"source_message_id":source_message_id}).execute()
-        if not post.data: raise RuntimeError("Não foi possível criar o lote Instagram.")
-        post_id=int(post.data[0]["id"]); primeiro_post_id=primeiro_post_id or post_id
-        supabase.table("instagram_post_products").insert([{"instagram_post_id":post_id,"produto_fila_id":produto_id,"position":position} for position,produto_id in enumerate(grupo,start=1)]).execute()
-        logger.info("Lote Instagram #%s criado com %d produto(s).",post_id,len(grupo))
+    if not produto_ids:
+        return None
+    ids = list(dict.fromkeys(int(x) for x in produto_ids))
+    bot_id = (bot_id or BOT_ID).strip()
+    primeiro_post_id = None
+    rows = supabase.table("produtos_fila").select("id,link").in_("id", ids).eq("bot_id", bot_id).eq("fila_origem", bot_id).execute().data or []
+    por_plataforma = {"shopee": [], "mercadolivre": []}
+    for row in rows:
+        por_plataforma[_marketplace_from_link(row.get("link"))].append(int(row["id"]))
+    for plataforma, plataforma_ids in por_plataforma.items():
+        for inicio in range(0, len(plataforma_ids), INSTAGRAM_BATCH_SIZE):
+            grupo = plataforma_ids[inicio:inicio + INSTAGRAM_BATCH_SIZE]
+            if len(grupo) < INSTAGRAM_BATCH_SIZE:
+                logger.info("Grupo Instagram %s aguardando completar %d produtos: %d/%d.", plataforma, INSTAGRAM_BATCH_SIZE, len(grupo), INSTAGRAM_BATCH_SIZE)
+                continue
+            post = supabase.table("instagram_posts").insert({"status": "pending", "bot_id": bot_id, "source_chat_id": source_chat_id, "source_message_id": source_message_id}).execute()
+            if not post.data:
+                raise RuntimeError("Não foi possível criar o lote Instagram.")
+            post_id = int(post.data[0]["id"])
+            primeiro_post_id = primeiro_post_id or post_id
+            supabase.table("instagram_post_products").insert([{"instagram_post_id": post_id, "produto_fila_id": produto_id, "position": position} for position, produto_id in enumerate(grupo, start=1)]).execute()
+            logger.info("Lote Instagram #%s criado com %d produto(s), plataforma=%s.", post_id, len(grupo), plataforma)
     return primeiro_post_id
 
 def registrar_produto_processado(supabase: Client, produto_id: int, produto: dict[str, Any]) -> list[int]:
@@ -197,7 +216,13 @@ def processar_lote_se_pronto(supabase: Client, post_id: int) -> bool:
     reservado=supabase.table("instagram_posts").update({"status":"manus_processing","updated_at":_agora()}).eq("id",post_id).eq("status","pending").execute()
     if not reservado.data: return False
     try:
-        resultado=criar_tarefa_carrossel(produtos,post_id); task=resultado.get("task_detail") or resultado.get("task") or {}; task_id=task.get("task_id") or resultado.get("task_id"); task_url=task.get("task_url") or resultado.get("task_url")
+        marketplaces = {str(x.get("marketplace") or "").strip().lower() for x in produtos}
+        marketplaces.discard("")
+        if not marketplaces:
+            marketplaces = {_marketplace_from_link(x.get("link")) for x in produtos}
+        if len(marketplaces) != 1:
+            raise ManusAPIError("CAROUSEL_MIXED_MARKETPLACES: lote contém plataformas diferentes.")
+        resultado=criar_tarefa_carrossel(produtos,post_id,next(iter(marketplaces))); task=resultado.get("task_detail") or resultado.get("task") or {}; task_id=task.get("task_id") or resultado.get("task_id"); task_url=task.get("task_url") or resultado.get("task_url")
         if not task_id: raise ManusAPIError(f"Manus não retornou task_id: {resultado}")
         supabase.table("instagram_posts").update({"manus_task_id":task_id,"manus_task_url":task_url,"prompt":"Carrossel Instagram criado automaticamente pela pipeline; preview enviado ao Telegram quando concluído.","updated_at":_agora()}).eq("id",post_id).execute()
         logger.info("Lote Instagram #%s enviado para Manus: %s",post_id,task_id); return True
@@ -314,7 +339,14 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
             value = structured.get("value") or {}
             produtos = _buscar_produtos_do_lote(supabase, post_id)
             caption = str(value.get("caption") or "")
-            if not _legenda_valida(caption, len(produtos)):
+            marketplaces = {str(x.get("marketplace") or "").strip().lower() for x in produtos}
+            marketplaces.discard("")
+            if not marketplaces:
+                marketplaces = {_marketplace_from_link(x.get("link")) for x in produtos}
+            if len(marketplaces) != 1:
+                raise ManusAPIError("CAROUSEL_MIXED_MARKETPLACES: lote contém plataformas diferentes.")
+            marketplace = next(iter(marketplaces))
+            if not _legenda_valida(caption, len(produtos), marketplace):
                 enviar_mensagem_tarefa(
                     task_id,
                     "A legenda retornada está fora do padrão obrigatório da Raposa Caçadora. "
@@ -353,7 +385,7 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
                     f"esperado pelo menos {INSTAGRAM_BATCH_SIZE + 1} (capa + produtos)."
                 )
 
-            caption = _normalizar_legenda(caption, produtos)
+            caption = _normalizar_legenda(caption, produtos, marketplace)
             assets = value.get("slides") if isinstance(value.get("slides"), list) else []
             assets = [dict(item) if isinstance(item, dict) else {"asset_url": str(item)} for item in assets]
             storage_assets = _persistir_attachments_storage(supabase, post_id, attachments)
