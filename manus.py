@@ -339,9 +339,6 @@ DADOS DOS 5 PRODUTOS:
                 "slides": {
                     "type": "array",
 
-                    "minItems": 5,
-                    "maxItems": 5,
-
                     "items": {
                         "type": "object",
 
