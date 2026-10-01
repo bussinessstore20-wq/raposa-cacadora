@@ -205,6 +205,7 @@ def _normalizar_produto(
 def criar_tarefa_carrossel(
     produtos: list[dict[str, Any]],
     post_id: int,
+    marketplace: str | None = None,
 ) -> dict[str, Any]:
 
     if not produtos:
@@ -223,6 +224,42 @@ def criar_tarefa_carrossel(
         for produto in produtos
     ]
 
+    def detectar_marketplace(produto: dict[str, Any]) -> str:
+        origem = str(produto.get("marketplace") or "").strip().lower()
+        if origem in {"shopee", "mercadolivre"}:
+            return origem
+        link = str(
+            produto.get("link")
+            or produto.get("affiliateLink")
+            or produto.get("manualAffiliateLink")
+            or ""
+        ).lower()
+        if any(
+            dominio in link
+            for dominio in ("mercadolivre.com.br", "mercadolibre.com", "meli.la")
+        ):
+            return "mercadolivre"
+        return "shopee"
+
+    plataformas = {
+        str(marketplace or "").strip().lower()
+    } if str(marketplace or "").strip().lower() in {"shopee", "mercadolivre"} else {
+        detectar_marketplace(produto) for produto in produtos
+    }
+
+    if len(plataformas) != 1:
+        raise ManusAPIError(
+            "CAROUSEL_MIXED_MARKETPLACES: "
+            "um lote não pode misturar Shopee e Mercado Livre."
+        )
+
+    marketplace_final = next(iter(plataformas))
+    plataforma_label = (
+        "MERCADO LIVRE"
+        if marketplace_final == "mercadolivre"
+        else "SHOPEE"
+    )
+
     # =========================================================
     # FONTE ÚNICA DO PROMPT
     # =========================================================
@@ -236,10 +273,19 @@ def criar_tarefa_carrossel(
     prompt_final = f"""
 {prompt_base}
 
+PLATAFORMA DE ORIGEM DO LOTE
+
+{plataforma_label}
+
+REGRA: todo o conteúdo deste lote deve seguir exclusivamente o contexto editorial da plataforma acima. Não misture referências, hashtags ou chamadas da outra plataforma.
+
 INSTRUÇÕES TÉCNICAS DA EXECUÇÃO
 
 ID interno do lote:
 {post_id}
+
+Plataforma identificada:
+{plataforma_label}
 
 QUANTIDADE
 
