@@ -38,8 +38,9 @@ def _legenda_valida(caption: str, quantidade: int, marketplace: str = "shopee") 
     if "@raposacacadora" not in texto or "EU QUERO" not in texto.upper(): return False
     if not re.search(r"1️⃣|1\\.\\s", texto): return False
     if quantidade >= 5 and not re.search(r"5️⃣|5\\.\\s", texto): return False
-    if not re.search(r"#(?:achadosshopee|shopee|raposacacadora)\\b", texto, re.I): return False
-    return True
+    hashtags = r"#(?:mercadolivre|achadosmercadolivre|raposacacadora)\\b" if marketplace == "mercadolivre" else r"#(?:achadosshopee|shopee|raposacacadora)\\b"
+    return bool(re.search(hashtags, texto, re.I))
+
 
 def _persistir_attachments_storage(supabase: Client, post_id: int, attachments: list[dict[str, str]]) -> list[dict[str, str]]:
     salvos = []
@@ -73,12 +74,23 @@ def _persistir_attachments_storage(supabase: Client, post_id: int, attachments: 
     return salvos
 
 def _normalizar_legenda(caption: str, produtos: list[dict[str, Any]], marketplace: str = "shopee") -> str:
-    texto=str(caption or "").strip(); texto=re.sub(r"https?://\\S+","",texto); texto=re.sub(r"\\n?Links? dos achadinhos:?\\s*","",texto,flags=re.I); texto=re.sub(r"\\n?Encontre os links[^\\n]*","",texto,flags=re.I); texto=re.sub(r"\\n?Acesse os links[^\\n]*","",texto,flags=re.I); texto=re.sub(r"\\n?Links? na ordem[^\\n]*","",texto,flags=re.I); texto=re.sub(r"\\n{3,}","\\n\\n",texto).strip()
-    nomes=[str(p.get("productName") or p.get("product_name") or p.get("name") or "Achadinho").strip() for p in produtos]
-    if not re.search(r"1️⃣|1\\.\\s",texto): texto += "\\n\\n"+"\\n".join(f"{i}️⃣ {nome}" for i,nome in enumerate(nomes,1))
-    if "EU QUERO" not in texto.upper() or "@raposacacadora" not in texto: texto += '\\n\\nTudo que você tá vendo aqui tá com LINK NA BIO e nos STORIES! 👇\\n\\n👉 Curte se você amou.\\n👉 Segue @raposacacadora pra não perder nenhum achado.\\n👉 Comenta "EU QUERO" que te mando todos os links no direct. 💌'
-    if not re.search(r"#(?:achadosshopee|shopee|raposacacadora)\\b",texto,re.I): texto += "\\n\\n#achadosshopee #shopee #raposacacadora"
+    texto = str(caption or "").strip()
+    texto = re.sub(r"https?://\\S+", "", texto)
+    texto = re.sub(r"\\n?Links? dos achadinhos:?\\s*", "", texto, flags=re.I)
+    texto = re.sub(r"\\n?Encontre os links[^\\n]*", "", texto, flags=re.I)
+    texto = re.sub(r"\\n?Acesse os links[^\\n]*", "", texto, flags=re.I)
+    texto = re.sub(r"\\n?Links? na ordem[^\\n]*", "", texto, flags=re.I)
+    texto = re.sub(r"\\n{3,}", "\\n\\n", texto).strip()
+    nomes = [str(p.get("productName") or p.get("product_name") or p.get("name") or "Achadinho").strip() for p in produtos]
+    if not re.search(r"1️⃣|1\\.\\s", texto):
+        texto += "\\n\\n" + "\\n".join(f"{i}️⃣ {nome}" for i, nome in enumerate(nomes, 1))
+    if "EU QUERO" not in texto.upper() or "@raposacacadora" not in texto:
+        texto += '\\n\\nTudo que você tá vendo aqui tá com LINK NA BIO e nos STORIES! 👇\\n\\n👉 Curte se você amou.\\n👉 Segue @raposacacadora pra não perder nenhum achado.\\n👉 Comenta "EU QUERO" que te mando todos os links no direct. 💌'
+    hashtags = r"#(?:mercadolivre|achadosmercadolivre|raposacacadora)\\b" if marketplace == "mercadolivre" else r"#(?:achadosshopee|shopee|raposacacadora)\\b"
+    if not re.search(hashtags, texto, re.I):
+        texto += "\\n\\n#mercadolivre #achadosmercadolivre #raposacacadora" if marketplace == "mercadolivre" else "\\n\\n#achadosshopee #shopee #raposacacadora"
     return texto
+
 
 def _marketplace_from_link(link: str) -> str:
     texto = str(link or "").lower()
