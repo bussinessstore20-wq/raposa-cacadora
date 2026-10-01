@@ -270,87 +270,33 @@ def criar_tarefa_carrossel(
     # PROMPT FINAL ENVIADO AO MANUS
     # =========================================================
 
+    # O prompt salvo no Supabase já contém as regras editoriais e visuais completas.
+    # Evitamos repetir essas regras aqui para manter a mensagem abaixo do limite
+    # aproximado de 5.000 tokens da API do Manus.
     prompt_final = f"""
 {prompt_base}
 
-PLATAFORMA DE ORIGEM DO LOTE
+EXECUÇÃO DO LOTE #{post_id} — PLATAFORMA: {plataforma_label}
+Crie exatamente 6 imagens: 1 capa + 5 slides de produto, em formato vertical 4:5 (1080x1350).
+Use somente os 5 produtos abaixo, na ordem fornecida. Preserve a identidade visual da Raposa Caçadora e as características reais de cada produto. Use a imagem correspondente de cada produto quando houver image_url. Não invente dados, preços, descontos, benefícios ou características. Não misture plataformas.
+Retorne a categoria, subcategoria, conceito, legenda completa e os 5 slides com position, product_id, headline, benefit e asset_url.
 
-{plataforma_label}
-
-REGRA: todo o conteúdo deste lote deve seguir exclusivamente o contexto editorial da plataforma acima. Não misture referências, hashtags ou chamadas da outra plataforma.
-
-INSTRUÇÕES TÉCNICAS DA EXECUÇÃO
-
-ID interno do lote:
-{post_id}
-
-Plataforma identificada:
-{plataforma_label}
-
-QUANTIDADE
-
-Use exatamente os 5 produtos fornecidos abaixo.
-
-Não invente produtos.
-Não substitua produtos.
-Não misture produtos.
-Não altere a ordem.
-
-ESTRUTURA OBRIGATÓRIA
-
-Crie exatamente:
-
-1 capa
-+
-5 slides de produto
-
-Total:
-6 imagens.
-
-FORMATO
-
-Formato vertical 4:5.
-
-1080x1350.
-
-PRODUTOS
-
-A posição de cada produto deve permanecer exatamente igual
-à ordem fornecida.
-
-O product_id retornado deve corresponder ao produto utilizado
-em cada slide.
-
-IMAGENS
-
-Sempre que existir image_url nos dados do produto,
-utilize a imagem correspondente daquele produto.
-
-Não associe a imagem de um produto a outro.
-
-PRESERVAÇÃO DO PRODUTO
-
-Não altere artificialmente:
-
-- formato;
-- cor;
-- material;
-- acabamento;
-- características;
-- modelo;
-- quantidade;
-- identidade visual do produto.
-
-O produto precisa permanecer reconhecível.
-
-DADOS DOS PRODUTOS
-
-{json.dumps(
-    produtos_publicos,
-    ensure_ascii=False,
-    indent=2,
-)}
+DADOS DOS 5 PRODUTOS:
+{json.dumps(produtos_publicos, ensure_ascii=False, separators=(",", ":"))}
 """.strip()
+
+    # Estimativa conservadora para evitar HTTP 400 por mensagem longa.
+    estimated_tokens = max(len(prompt_final) / 3.0, len(prompt_final.split()) * 1.5)
+    logger.info(
+        "Tamanho do pedido Manus para lote #%s: %s caracteres, estimativa %.0f tokens.",
+        post_id, len(prompt_final), estimated_tokens,
+    )
+    if estimated_tokens > 4700:
+        raise ManusAPIError(
+            "MANUS_PROMPT_TOO_LONG: mensagem estimada em "
+            f"{estimated_tokens:.0f} tokens; limite preventivo de 4700. "
+            "Reduza o prompt editorial salvo em bot_settings.instagram_prompt."
+        )
 
     payload = {
         "message": {
