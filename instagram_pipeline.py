@@ -275,7 +275,7 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
 
     post_response = (
         supabase.table("instagram_posts")
-        .select("id,status,bot_id")
+        .select("id,status,bot_id,error")
         .eq("manus_task_id", task_id)
         .eq("bot_id", BOT_ID)
         .limit(1)
@@ -347,7 +347,40 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
         try:
             structured = detail.get("structured_output") or {}
             if not structured.get("success", False):
-                raise ManusAPIError(structured.get("error") or "Manus não retornou structured output.")
+                erro_structured = str(
+                    structured.get("error") or "Manus não retornou structured output."
+                )
+                erro_anterior = str(post_response.data[0].get("error") or "")
+                erro_lower = erro_structured.lower()
+                erro_transitorio = any(
+                    marcador in erro_lower
+                    for marcador in (
+                        "manus_http_500", "node server request failed",
+                        "resource temporarily unavailable", "readerror",
+                        "internal server error",
+                    )
+                )
+                # Tenta recuperar uma única vez falhas internas/transitórias de extração.
+                if erro_transitorio and "AUTO_RETRY_MANUS_500" not in erro_anterior:
+                    mensagem_retry = (
+                        "A primeira finalização sofreu um erro interno/transitório ao extrair "
+                        "o resultado estruturado. Retome esta mesma tarefa, preserve o padrão "
+                        "visual das tarefas anteriores e conclua a entrega. Não comece do zero "
+                        "se as imagens já tiverem sido criadas. Retorne category, subcategory, "
+                        "concept, caption e slides no formato JSON solicitado."
+                    )
+                    enviar_mensagem_tarefa(task_id, mensagem_retry)
+                    supabase.table("instagram_posts").update({
+                        "status": "manus_processing",
+                        "error": "AUTO_RETRY_MANUS_500: " + erro_structured[:3500],
+                        "updated_at": _agora(),
+                    }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
+                    logger.warning(
+                        "Solicitada uma única recuperação automática para erro interno Manus no carrossel #%s.",
+                        post_id,
+                    )
+                    return True, "recuperação automática solicitada ao Manus"
+                raise ManusAPIError(erro_structured)
             value = structured.get("value") or {}
             produtos = _buscar_produtos_do_lote(supabase, post_id)
             caption = str(value.get("caption") or "")
