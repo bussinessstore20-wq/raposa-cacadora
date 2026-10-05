@@ -478,7 +478,16 @@ def buscar_produto_por_link(link: str) -> dict:
             "Mercado Livre API retornou 403 para %s; usando dados públicos da página.",
             item_id,
         )
-        return _extrair_dados_da_pagina(html, url_final, item_id)
+        produto = _extrair_dados_da_pagina(html, url_final, item_id)
+        try:
+            produto.update(_consultar_cupom_item(access_token, produto["itemId"]))
+        except Exception:
+            logger.exception(
+                "Mercado Livre: falha inesperada ao enriquecer %s com cupom; "
+                "publicação continuará normalmente.",
+                produto["itemId"],
+            )
+        return produto
 
     if response.status_code >= 400:
         raise MercadoLivreAPIError(
