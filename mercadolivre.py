@@ -447,6 +447,68 @@ def _consultar_cupom_item(access_token: str, item_id: str) -> dict:
 
     return resultado
 
+def _extrair_cupom_da_pagina(html: str, item_id: str = "") -> dict:
+    """Detecta o cupom exibido publicamente na página do Mercado Livre."""
+    if not html:
+        return {}
+
+    try:
+        texto = unescape(unquote(str(html)))
+        texto = texto.replace("\\/","/")
+        texto = re.sub(r"<[^>]+>", " ", texto)
+        texto = re.sub(r"\\s+", " ", texto).strip()
+    except Exception:
+        return {}
+
+    padroes = (
+        r"cupom\\s+(?P<pct>\\d{1,2}(?:[.,]\\d+)?)\\s*%\\s*off(?P<resto>.{0,120})",
+        r"cupom\\s+(?P<valor>R\\$\\s*[0-9]{1,3}(?:\\.[0-9]{3})*(?:,[0-9]{2})?)\\s*off(?P<resto>.{0,120})",
+    )
+
+    for padrao in padroes:
+        match = re.search(padrao, texto, re.I)
+        if not match:
+            continue
+
+        resto = str(match.groupdict().get("resto") or "")
+        minimo_match = re.search(
+            r"compra\\s+m[íi]nima\\s*:?[ ]*R\\$\\s*([0-9]{1,3}(?:\\.[0-9]{3})*(?:,[0-9]{2})?|[0-9]+(?:,[0-9]{2})?)",
+            resto,
+            re.I,
+        )
+
+        try:
+            percentual = float(str(match.groupdict().get("pct") or "0").replace(",", "."))
+        except ValueError:
+            percentual = 0.0
+
+        try:
+            valor_texto = re.sub(r"[^\\d,.]", "", str(match.groupdict().get("valor") or ""))
+            valor = float(valor_texto.replace(".", "").replace(",", ".")) if valor_texto else 0.0
+        except ValueError:
+            valor = 0.0
+
+        try:
+            minimo = float(minimo_match.group(1).replace(".", "").replace(",", ".")) if minimo_match else 0.0
+        except ValueError:
+            minimo = 0.0
+
+        logger.info(
+            "Cupom público Mercado Livre encontrado: item=%s | percentual=%s | valor=%s | mínimo=%s",
+            item_id, percentual, valor, minimo,
+        )
+        return {
+            "couponActive": True,
+            "couponSource": "public_page",
+            "couponCode": "",
+            "couponDiscountAmount": valor,
+            "couponDiscountPercentage": percentual,
+            "couponMinPurchaseAmount": minimo,
+        }
+
+    return {}
+
+
 def buscar_produto_por_link(link: str) -> dict:
     """Consulta um item público do Mercado Livre e normaliza para o formato usado pela Raposa."""
     url_final, html = _resolver_link(link)
@@ -480,7 +542,11 @@ def buscar_produto_por_link(link: str) -> dict:
         )
         produto = _extrair_dados_da_pagina(html, url_final, item_id)
         try:
-            produto.update(_consultar_cupom_item(access_token, produto["itemId"]))
+            cupom_api = _consultar_cupom_item(access_token, produto["itemId"])
+            if cupom_api:
+                produto.update(cupom_api)
+            else:
+                produto.update(_extrair_cupom_da_pagina(html, produto["itemId"]))
         except Exception:
             logger.exception(
                 "Mercado Livre: falha inesperada ao enriquecer %s com cupom; "
@@ -550,7 +616,11 @@ def buscar_produto_por_link(link: str) -> dict:
     }
 
     try:
-        produto.update(_consultar_cupom_item(access_token, produto["itemId"]))
+        cupom_api = _consultar_cupom_item(access_token, produto["itemId"])
+        if cupom_api:
+            produto.update(cupom_api)
+        else:
+            produto.update(_extrair_cupom_da_pagina(html, produto["itemId"]))
     except Exception:
         logger.exception(
             "Mercado Livre: falha inesperada ao enriquecer %s com cupom; "
