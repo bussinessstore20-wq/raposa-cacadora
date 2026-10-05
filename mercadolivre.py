@@ -456,13 +456,13 @@ def _extrair_cupom_da_pagina(html: str, item_id: str = "") -> dict:
         texto = unescape(unquote(str(html)))
         texto = texto.replace("\\/","/")
         texto = re.sub(r"<[^>]+>", " ", texto)
-        texto = re.sub(r"\\s+", " ", texto).strip()
+        texto = re.sub(r"\s+", " ", texto).strip()
     except Exception:
         return {}
 
     padroes = (
-        r"cupom\\s+(?P<pct>\\d{1,2}(?:[.,]\\d+)?)\\s*%\\s*off(?P<resto>.{0,120})",
-        r"cupom\\s+(?P<valor>R\\$\\s*[0-9]{1,3}(?:\\.[0-9]{3})*(?:,[0-9]{2})?)\\s*off(?P<resto>.{0,120})",
+        r"cupom\s+(?P<pct>\d{1,2}(?:[.,]\d+)?)\s*%\s*off(?P<resto>.{0,120})",
+        r"cupom\s+(?P<valor>R\$\s*[0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?)\s*off(?P<resto>.{0,120})",
     )
 
     for padrao in padroes:
@@ -472,7 +472,7 @@ def _extrair_cupom_da_pagina(html: str, item_id: str = "") -> dict:
 
         resto = str(match.groupdict().get("resto") or "")
         minimo_match = re.search(
-            r"compra\\s+m[íi]nima\\s*:?[ ]*R\\$\\s*([0-9]{1,3}(?:\\.[0-9]{3})*(?:,[0-9]{2})?|[0-9]+(?:,[0-9]{2})?)",
+            r"compra\s+m[íi]nima\s*:?\s*R\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?|[0-9]+(?:,[0-9]{2})?)",
             resto,
             re.I,
         )
@@ -483,7 +483,7 @@ def _extrair_cupom_da_pagina(html: str, item_id: str = "") -> dict:
             percentual = 0.0
 
         try:
-            valor_texto = re.sub(r"[^\\d,.]", "", str(match.groupdict().get("valor") or ""))
+            valor_texto = re.sub(r"[^\d,.]", "", str(match.groupdict().get("valor") or ""))
             valor = float(valor_texto.replace(".", "").replace(",", ".")) if valor_texto else 0.0
         except ValueError:
             valor = 0.0
@@ -507,7 +507,6 @@ def _extrair_cupom_da_pagina(html: str, item_id: str = "") -> dict:
         }
 
     return {}
-
 
 def buscar_produto_por_link(link: str) -> dict:
     """Consulta um item público do Mercado Livre e normaliza para o formato usado pela Raposa."""
