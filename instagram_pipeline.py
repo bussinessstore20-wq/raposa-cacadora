@@ -391,13 +391,35 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
             if len(marketplaces) != 1:
                 raise ManusAPIError("CAROUSEL_MIXED_MARKETPLACES: lote contém plataformas diferentes.")
             marketplace = next(iter(marketplaces))
+            # Nunca peça ao Manus para regenerar a legenda. Isso cria um loop de
+            # task.sendMessage e consome créditos. A correção do campo caption é feita
+            # localmente pela pipeline; as imagens não são regeneradas.
             if not _legenda_valida(caption, len(produtos), marketplace):
-                enviar_mensagem_tarefa(
-                    task_id,
-                    "A legenda retornada está fora do padrão obrigatório da Raposa Caçadora. "
-                    "REFAÇA SOMENTE o campo caption. Não publique nada ainda; aguarde a validação da legenda corrigida.",
+                caption_corrigida = _normalizar_legenda(caption, produtos, marketplace)
+                if not _legenda_valida(caption_corrigida, len(produtos), marketplace):
+                    supabase.table("instagram_posts").update({
+                        "status": "caption_review",
+                        "caption": caption_corrigida,
+                        "manus_result": structured,
+                        "error": (
+                            "CAPTION_REVIEW_REQUIRED: a legenda retornada pelo Manus "
+                            "não passou na validação automática. Nenhuma nova mensagem "
+                            "foi enviada ao Manus e nenhuma publicação foi executada."
+                        ),
+                        "updated_at": _agora(),
+                    }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
+                    logger.warning(
+                        "Legenda do carrossel #%s inválida após correção local; "
+                        "Manus não será acionado novamente.",
+                        post_id,
+                    )
+                    return True, "legenda pendente de validação local"
+                caption = caption_corrigida
+                logger.info(
+                    "Legenda do carrossel #%s corrigida localmente; "
+                    "nenhuma nova tarefa/mensagem foi enviada ao Manus.",
+                    post_id,
                 )
-                return True, "legenda inválida; correção solicitada ao Manus"
 
             attachments = _extrair_attachments(detail)
             try:
