@@ -299,6 +299,154 @@ def _extrair_dados_da_pagina(html: str, url_final: str, item_id: str) -> dict:
         "marketplace": "mercadolivre",
     }
 
+
+def _consultar_cupom_item(access_token: str, item_id: str) -> dict:
+    """
+    Consulta uma campanha de cupom do vendedor vinculada ao item.
+
+    Cupom é enriquecimento opcional: falhas de permissão/API nunca impedem
+    a coleta e publicação normal do produto.
+    """
+    resultado = {}
+    if not access_token or not item_id:
+        return resultado
+
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": "RaposaCacadora/1.0",
+    }
+
+    try:
+        response = requests.get(
+            f"{MERCADO_LIVRE_API_URL}/seller-promotions/items/{item_id}",
+            params={"app_version": "v2"},
+            timeout=15,
+            headers=headers,
+        )
+    except requests.RequestException as erro:
+        logger.warning("Mercado Livre: falha ao consultar promoções de %s: %s", item_id, erro)
+        return resultado
+
+    if response.status_code in (401, 403):
+        logger.warning(
+            "Mercado Livre: cupons indisponíveis para %s (HTTP %s); "
+            "produto seguirá normalmente.",
+            item_id,
+            response.status_code,
+        )
+        return resultado
+
+    if response.status_code >= 400:
+        logger.warning(
+            "Mercado Livre: HTTP %s ao consultar promoções de %s.",
+            response.status_code,
+            item_id,
+        )
+        return resultado
+
+    try:
+        promocoes = response.json()
+    except ValueError:
+        logger.warning("Mercado Livre: resposta inválida de promoções para %s.", item_id)
+        return resultado
+
+    if isinstance(promocoes, dict):
+        promocoes = promocoes.get("results") or promocoes.get("promotions") or []
+    if not isinstance(promocoes, list):
+        promocoes = []
+
+    candidatas = [
+        p for p in promocoes
+        if isinstance(p, dict)
+        and str(p.get("type") or "").upper() == "SELLER_COUPON_CAMPAIGN"
+        and str(p.get("status") or "").lower() in {"started", "active"}
+    ]
+
+    for promocao in candidatas:
+        promotion_id = (
+            promocao.get("id")
+            or promocao.get("promotion_id")
+            or promocao.get("promotionId")
+        )
+        detalhe = dict(promocao)
+
+        if promotion_id:
+            try:
+                detalhe_response = requests.get(
+                    f"{MERCADO_LIVRE_API_URL}/seller-promotions/promotions/{promotion_id}",
+                    params={
+                        "promotion_type": "SELLER_COUPON_CAMPAIGN",
+                        "app_version": "v2",
+                    },
+                    timeout=15,
+                    headers=headers,
+                )
+                if detalhe_response.status_code < 400:
+                    corpo = detalhe_response.json()
+                    if isinstance(corpo, dict):
+                        detalhe.update(corpo)
+            except (requests.RequestException, ValueError):
+                logger.info(
+                    "Mercado Livre: não foi possível obter detalhe do cupom %s.",
+                    promotion_id,
+                )
+
+        status = str(detalhe.get("status") or promocao.get("status") or "").lower()
+        if status not in {"started", "active"}:
+            continue
+
+        coupon_code = str(detalhe.get("coupon_code") or "").strip()
+        subtype = str(
+            detalhe.get("sub_type") or promocao.get("sub_type") or ""
+        ).upper()
+
+        fixed_amount = detalhe.get("fixed_amount")
+        if fixed_amount is None:
+            fixed_amount = promocao.get("fixed_amount")
+
+        fixed_percentage = detalhe.get("fixed_percentage")
+        if fixed_percentage is None:
+            fixed_percentage = promocao.get("fixed_percentage")
+
+        min_purchase = detalhe.get("min_purchase_amount")
+        if min_purchase is None:
+            min_purchase = promocao.get("min_purchase_amount")
+
+        max_refund = detalhe.get("max_purchase_amount")
+        if max_refund is None:
+            max_refund = promocao.get("max_purchase_amount")
+
+        resultado = {
+            "couponActive": True,
+            "couponPromotionId": str(promotion_id or detalhe.get("id") or ""),
+            "couponName": str(detalhe.get("name") or ""),
+            "couponCode": coupon_code,
+            "couponSubtype": subtype,
+            "couponDiscountAmount": float(fixed_amount or 0),
+            "couponDiscountPercentage": float(fixed_percentage or 0),
+            "couponMinPurchaseAmount": float(min_purchase or 0),
+            "couponMaxRefund": float(max_refund or 0),
+            "couponStartDate": detalhe.get("start_date") or promocao.get("start_date"),
+            "couponFinishDate": detalhe.get("finish_date") or promocao.get("finish_date"),
+            "couponRemainingBudget": float(detalhe.get("remaining_budget") or 0),
+            "couponUsedCoupons": int(detalhe.get("used_coupons") or 0),
+        }
+
+        logger.info(
+            "Cupom Mercado Livre encontrado: item=%s | promoção=%s | tipo=%s | "
+            "valor=%s | percentual=%s | código=%s",
+            item_id,
+            resultado["couponPromotionId"],
+            subtype,
+            resultado["couponDiscountAmount"],
+            resultado["couponDiscountPercentage"],
+            "sim" if coupon_code else "não",
+        )
+        return resultado
+
+    return resultado
+
 def buscar_produto_por_link(link: str) -> dict:
     """Consulta um item público do Mercado Livre e normaliza para o formato usado pela Raposa."""
     url_final, html = _resolver_link(link)
@@ -391,6 +539,15 @@ def buscar_produto_por_link(link: str) -> dict:
         "affiliateLink": link,
         "marketplace": "mercadolivre",
     }
+
+    try:
+        produto.update(_consultar_cupom_item(access_token, produto["itemId"]))
+    except Exception:
+        logger.exception(
+            "Mercado Livre: falha inesperada ao enriquecer %s com cupom; "
+            "publicação continuará normalmente.",
+            produto["itemId"],
+        )
 
     logger.info(
         "Produto Mercado Livre encontrado: %s | item=%s",
