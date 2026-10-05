@@ -1,5 +1,6 @@
 
 import asyncio
+from html import escape as html_escape
 import base64
 import hashlib
 import hmac
@@ -1936,6 +1937,31 @@ def montar_mensagem(
         partes.append(f"💰 <b>Por apenas: {moeda(preco_atual)}</b>\n")
         if desconto > 0:
             partes.append(f"🏷️ <b>{desconto:.0f}% OFF</b>\n")
+
+        # Cupom do Mercado Livre é exibido somente quando a API confirmou
+        # uma campanha SELLER_COUPON_CAMPAIGN ativa para este item.
+        if produto.get("couponActive"):
+            coupon_code = html_escape(str(produto.get("couponCode") or "").strip())
+            coupon_amount = numero(produto.get("couponDiscountAmount"))
+            coupon_percentage = numero(produto.get("couponDiscountPercentage"))
+            coupon_minimum = numero(produto.get("couponMinPurchaseAmount"))
+
+            partes.append("\n")
+            partes.append("🎟️ <b>CUPOM ATIVO</b>\n")
+
+            if coupon_amount > 0:
+                partes.append(f"💸 <b>{moeda(coupon_amount)} OFF</b>\n")
+            elif coupon_percentage > 0:
+                partes.append(f"🏷️ <b>{coupon_percentage:.0f}% OFF</b>\n")
+
+            if coupon_code:
+                partes.append(f"🔑 Código: <code>{coupon_code}</code>\n")
+            else:
+                partes.append("✨ Cupom automático para este anúncio\n")
+
+            if coupon_minimum > 0:
+                partes.append(f"🛒 Mínimo: <b>{moeda(coupon_minimum)}</b>\n")
+
         partes.extend([
             "\n",
             "━━━━━━━━━━━━━━━━━━\n",
