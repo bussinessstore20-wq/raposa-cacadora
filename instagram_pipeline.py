@@ -360,26 +360,9 @@ def processar_webhook_manus(supabase: Client, payload: dict[str, Any]) -> tuple[
                         "internal server error",
                     )
                 )
-                # Tenta recuperar uma única vez falhas internas/transitórias de extração.
-                if erro_transitorio and "AUTO_RETRY_MANUS_500" not in erro_anterior:
-                    mensagem_retry = (
-                        "A primeira finalização sofreu um erro interno/transitório ao extrair "
-                        "o resultado estruturado. Retome esta mesma tarefa, preserve o padrão "
-                        "visual das tarefas anteriores e conclua a entrega. Não comece do zero "
-                        "se as imagens já tiverem sido criadas. Retorne category, subcategory, "
-                        "concept, caption e slides no formato JSON solicitado."
-                    )
-                    enviar_mensagem_tarefa(task_id, mensagem_retry)
-                    supabase.table("instagram_posts").update({
-                        "status": "manus_processing",
-                        "error": "AUTO_RETRY_MANUS_500: " + erro_structured[:3500],
-                        "updated_at": _agora(),
-                    }).eq("id", post_id).eq("bot_id", BOT_ID).execute()
-                    logger.warning(
-                        "Solicitada uma única recuperação automática para erro interno Manus no carrossel #%s.",
-                        post_id,
-                    )
-                    return True, "recuperação automática solicitada ao Manus"
+                # Não enviar mensagens automáticas de recuperação ao Manus.
+                # Qualquer retry via task.sendMessage pode consumir créditos e criar
+                # um novo ciclo de geração. O lote permanece em erro para intervenção.
                 raise ManusAPIError(erro_structured)
             value = structured.get("value") or {}
             produtos = _buscar_produtos_do_lote(supabase, post_id)
