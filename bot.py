@@ -1902,16 +1902,13 @@ def montar_mensagem(
     produto,
     marketplace=None,
 ):
-
     nome = produto.get("productName") or "Produto"
     preco = numero(produto.get("price"))
     preco_min = numero(produto.get("priceMin"))
     desconto = numero(produto.get("priceDiscountRate"))
     avaliacao = numero(produto.get("ratingStar"))
     vendas = inteiro(produto.get("sales"))
-    loja = produto.get("shopName") or (
-        "Mercado Livre" if marketplace == "mercadolivre" else "Loja Shopee"
-    )
+    loja = produto.get("shopName") or "Loja Shopee"
 
     preco_atual = preco_min if preco_min > 0 else preco
     original = numero(produto.get("originalPrice"))
@@ -1925,21 +1922,17 @@ def montar_mensagem(
 
     if marketplace == "mercadolivre":
         partes = [
-            "🟨 <b>OFERTA MERCADO LIVRE</b>\n",
+            "🦊🔥 <b>ACHADINHO MERCADO LIVRE</b>\n",
             "\n",
             f"✨ <b>{nome}</b>\n",
             "\n",
-            "━━━━━━━━━━━━━━━━━━\n",
-            "\n",
+            f"💥 <b>DE {moeda(preco_anterior)}</b>\n",
+            f"🏷️ <b>POR {moeda(preco_atual)}</b>\n",
         ]
-        if preco_anterior > preco_atual > 0:
-            partes.append(f"❌ De: <s>{moeda(preco_anterior)}</s>\n")
-        partes.append(f"💰 <b>Por apenas: {moeda(preco_atual)}</b>\n")
-        if desconto > 0:
-            partes.append(f"🏷️ <b>{desconto:.0f}% OFF</b>\n")
 
-        # Cupom do Mercado Livre é exibido somente quando a API confirmou
-        # uma campanha SELLER_COUPON_CAMPAIGN ativa para este item.
+        if desconto > 0:
+            partes.append(f"🟢 <b>{desconto:.0f}% DE DESCONTO</b>\n")
+
         if produto.get("couponActive"):
             coupon_code = html_escape(str(produto.get("couponCode") or "").strip())
             coupon_amount = numero(produto.get("couponDiscountAmount"))
@@ -1948,17 +1941,14 @@ def montar_mensagem(
 
             partes.append("\n")
             partes.append("🎟️ <b>CUPOM ATIVO</b>\n")
-
             if coupon_amount > 0:
                 partes.append(f"💸 <b>{moeda(coupon_amount)} OFF</b>\n")
             elif coupon_percentage > 0:
                 partes.append(f"🏷️ <b>{coupon_percentage:.0f}% OFF</b>\n")
-
             if coupon_code:
                 partes.append(f"🔑 Código: <code>{coupon_code}</code>\n")
             else:
                 partes.append("✨ Cupom automático para este anúncio\n")
-
             if coupon_minimum > 0:
                 partes.append(f"🛒 Mínimo: <b>{moeda(coupon_minimum)}</b>\n")
 
@@ -1966,38 +1956,33 @@ def montar_mensagem(
             "\n",
             "━━━━━━━━━━━━━━━━━━\n",
             "\n",
-        ])
-        if vendas > 0:
-            partes.append(f"📦 <b>{formatar_vendas(vendas)}</b> vendas\n")
-        partes.extend([
-            "🏪 <b>Mercado Livre</b>\n",
+            "🚨 <b>OFERTA POR TEMPO LIMITADO!</b>\n",
+            "O preço pode mudar a qualquer momento.\n",
             "\n",
-            "🚨 <b>Preço sujeito a alteração.</b>\n",
-            "⚡ Aproveite enquanto estiver disponível!",
+            "👇 <b>Aproveite enquanto estiver disponível!</b>",
         ])
         return "".join(partes)
 
     return (
-        "🟧 <b>ACHADINHO DA SHOPEE</b>\n"
+        "🦊🔥 <b>ACHADINHO SHOPEE</b>\n"
         "\n"
         f"✨ <b>{nome}</b>\n"
         "\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+        f"💥 <b>DE {moeda(preco_anterior)}</b>\n"
+        f"🏷️ <b>POR {moeda(preco_atual)}</b>\n"
+        f"🟢 <b>{desconto:.0f}% DE DESCONTO</b>\n"
         "\n"
-        f"💰 De: <s>{moeda(preco_anterior)}</s>\n"
-        f"🔥 <b>Por: {moeda(preco_atual)}</b>\n"
-        f"🏷️ <b>{desconto:.0f}% OFF</b>\n"
-        "\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "\n"
-        f"⭐ <b>{avaliacao:.1f}</b>/5\n"
-        f"📦 <b>{formatar_vendas(vendas)}</b> vendas\n"
+        f"⭐ <b>{avaliacao:.1f}/5 de avaliação</b>\n"
+        f"🔥 <b>{formatar_vendas(vendas)} vendas</b>\n"
         f"🏪 <b>{loja}</b>\n"
         "\n"
-        "🚨 <b>Preço sujeito a alteração.</b>\n"
-        "⚡ Aproveite enquanto estiver disponível!"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "\n"
+        "🚨 <b>OFERTA POR TEMPO LIMITADO!</b>\n"
+        "O preço pode mudar a qualquer momento.\n"
+        "\n"
+        "👇 <b>Aproveite enquanto estiver disponível!</b>"
     )
-
 
 # ============================================================
 # PUBLICAR PRODUTO
