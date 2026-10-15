@@ -79,6 +79,7 @@ WAHA_URL = os.getenv("WAHA_URL", "https://raposa-waha.onrender.com").strip().rst
 WAHA_API_KEY = os.getenv("WAHA_API_KEY", "").strip()
 WAHA_CHANNEL_ID = os.getenv("WAHA_CHANNEL_ID", "").strip()
 WHATSAPP_FORWARD_ENABLED = os.getenv("WHATSAPP_FORWARD_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+WAHA_TEXT_ONLY_PREVIEW = os.getenv("WAHA_TEXT_ONLY_PREVIEW", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 TELEGRAM_ADMIN_ID = os.getenv(
     "TELEGRAM_ADMIN_ID",
@@ -2011,6 +2012,8 @@ async def encaminhar_para_whatsapp(produto: dict[str, Any], mensagem_html: str, 
         texto = f"{texto}\n\n🛒 COMPRAR AGORA: {link_afiliado}"
 
     image_url = str(produto.get("imageUrl") or "").strip()
+    if WAHA_TEXT_ONLY_PREVIEW:
+        image_url = ""
 
     def _enviar():
         headers = {"X-Api-Key": WAHA_API_KEY, "Content-Type": "application/json", "Accept": "application/json"}
@@ -2023,6 +2026,7 @@ async def encaminhar_para_whatsapp(produto: dict[str, Any], mensagem_html: str, 
             })
         else:
             payload["text"] = texto
+            payload["linkPreview"] = True
 
         resposta = requests.post(endpoint, headers=headers, json=payload, timeout=25)
         if not resposta.ok and image_url:
@@ -2031,7 +2035,7 @@ async def encaminhar_para_whatsapp(produto: dict[str, Any], mensagem_html: str, 
             resposta = requests.post(
                 f"{WAHA_URL}/api/sendText",
                 headers=headers,
-                json={"session": "default", "chatId": WAHA_CHANNEL_ID, "text": texto},
+                json={"session": "default", "chatId": WAHA_CHANNEL_ID, "text": texto, "linkPreview": True},
                 timeout=25,
             )
         resposta.raise_for_status()
